@@ -1,0 +1,6 @@
+# Tokens and secrets
+*.token
+*.key
+.env
+secrets/
+
