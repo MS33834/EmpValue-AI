@@ -1,0 +1,34 @@
+[
+  {
+    "input_id": "daily-001",
+    "employee_id": "E1001",
+    "period": "2026-W25",
+    "type": "daily_report",
+    "content": "本周完成了用户登录模块的重构，修复了 3 个高优先级 Bug，代码评审通过率为 92%。参与了两次跨团队技术分享，主动帮助新同学定位了缓存穿透问题。",
+    "attachments": []
+  },
+  {
+    "input_id": "task-001",
+    "employee_id": "E1001",
+    "period": "2026-W25",
+    "type": "task_progress",
+    "content": "JIRA-2048 进度 100%，JIRA-2051 进度 60%，阻塞原因是依赖方接口文档未更新。",
+    "attachments": []
+  },
+  {
+    "input_id": "daily-002",
+    "employee_id": "E1002",
+    "period": "2026-W25",
+    "type": "daily_report",
+    "content": "本周主要处理日常工单，完成了 5 个低优先级任务，没有参与团队技术讨论，日报内容较为简短。",
+    "attachments": []
+  },
+  {
+    "input_id": "daily-003",
+    "employee_id": "E1003",
+    "period": "2026-W25",
+    "type": "daily_report",
+    "content": "主导了推荐引擎 v2 的架构设计，提出了基于向量缓存的优化方案，预计下周落地。本周输出技术方案文档 2 份，组织评审会 1 次。",
+    "attachments": []
+  }
+]
