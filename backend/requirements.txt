@@ -13,3 +13,4 @@ pytest-cov>=4.0
 python-dotenv>=1.0
 httpx>=0.24
 psutil>=5.9
+langfuse>=2.0

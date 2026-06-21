@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     temperature: float = 0.1
     max_tokens: int = 4096
 
+    # Langfuse 可观测性配置
+    langfuse_public_key: Optional[str] = None
+    langfuse_secret_key: Optional[str] = None
+    langfuse_host: str = "https://cloud.langfuse.com"
+
 
 @lru_cache()
 def get_settings() -> Settings:

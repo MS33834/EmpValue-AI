@@ -9,11 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from agent.tools import DummyCompanyKB, DummyMemoryStore
 from api.deps import AppState, get_app_state
 from auth.rbac import Role, can_access, require_role
+from core.tracing import tracer
 from schemas import EmployeeEvaluation
 from services.approval_service import ApprovalService
 from services.audit_service import AuditService
 
 router = APIRouter(prefix="/api/v1")
+
+
 
 
 @router.post("/evaluations", response_model=Dict[str, Any])
@@ -32,36 +35,52 @@ async def create_evaluation(
             detail="employee_id 和 period 必填",
         )
 
-    graph = app_state.get_graph()
-    initial_state = {
-        "employee_id": employee_id,
-        "period": period,
-        "raw_inputs": raw_inputs,
-        "messages": [],
-    }
+    with tracer.trace(
+        name="create_evaluation",
+        evaluation_id=None,
+        employee_id=employee_id,
+        metadata={"period": period, "input_count": len(raw_inputs)},
+    ) as trace:
+        graph = app_state.get_graph()
+        initial_state = {
+            "employee_id": employee_id,
+            "period": period,
+            "raw_inputs": raw_inputs,
+            "messages": [],
+        }
 
-    result = await graph.ainvoke(initial_state)
+        with tracer.span(trace, "run_graph", input_data=initial_state):
+            result = await graph.ainvoke(initial_state)
 
-    if result.get("error"):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=result["error"],
-        )
+        if result.get("error"):
+            trace.update(metadata={**trace.metadata, "error": result["error"]})
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result["error"],
+            )
 
-    evaluation = result.get("parsed_evaluation")
-    if evaluation:
-        app_state.audit_service.log(
-            actor_id="system",
-            action="create_evaluation",
-            evaluation_id=evaluation.get("evaluation_id"),
-            employee_id=employee_id,
-            details={"period": period, "model_tier": evaluation.get("audit", {}).get("model_tier")},
-        )
+        evaluation = result.get("parsed_evaluation")
+        if evaluation:
+            trace.update(
+                output=evaluation,
+                metadata={
+                    **trace.metadata,
+                    "model_tier": evaluation.get("audit", {}).get("model_tier"),
+                    "overall_score": evaluation.get("overall_score"),
+                },
+            )
+            app_state.audit_service.log(
+                actor_id="system",
+                action="create_evaluation",
+                evaluation_id=evaluation.get("evaluation_id"),
+                employee_id=employee_id,
+                details={"period": period, "model_tier": evaluation.get("audit", {}).get("model_tier")},
+            )
 
-    return {
-        "evaluation": evaluation,
-        "status": result.get("status"),
-    }
+        return {
+            "evaluation": evaluation,
+            "status": result.get("status"),
+        }
 
 
 @router.get("/evaluations/{evaluation_id}")

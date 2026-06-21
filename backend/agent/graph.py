@@ -5,11 +5,12 @@ LangGraph 评估工作流
 import json
 import time
 import uuid
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
+from core.guards import InputGuard, OutputGuard
 from core.model_router import ModelRouter
 from core.providers.base import ChatMessage
 from schemas import EmployeeEvaluation
@@ -24,11 +25,34 @@ def create_evaluation_graph(
     model_router: ModelRouter,
     prompt_loader: PromptLoader,
     prompt_name: str = "daily_evaluation",
+    input_guard: Optional[InputGuard] = None,
+    output_guard: Optional[OutputGuard] = None,
 ):
     """创建评估工作流图"""
 
+    input_guard = input_guard or InputGuard()
+    output_guard = output_guard or OutputGuard()
+
+    async def input_sanitizer(state: EvaluationState) -> EvaluationState:
+        """输入护栏：检查 Prompt 注入与恶意内容"""
+        result = input_guard.check(state["raw_inputs"])
+        if not result.allowed:
+            return {
+                **state,
+                "error": f"输入被拦截: {result.reason}",
+                "status": "error",
+                "audit_info": {"triggered_rules": result.triggered_rules},
+            }
+        return {
+            **state,
+            "status": "ai_processing",
+            "cleaned_inputs": state["raw_inputs"],
+        }
+
     async def retrieve_context(state: EvaluationState) -> EvaluationState:
         """获取员工历史记忆与公司知识库"""
+        if state.get("error"):
+            return state
         history = await toolkit.get_employee_history(
             state["employee_id"],
             period=state["period"],
@@ -42,14 +66,16 @@ def create_evaluation_graph(
             **state,
             "employee_history": history,
             "company_kb": kb,
-            "status": "ai_processing",
         }
 
     async def build_prompt(state: EvaluationState) -> EvaluationState:
         """渲染 System Prompt"""
+        if state.get("error"):
+            return state
+        inputs = state.get("cleaned_inputs") or state["raw_inputs"]
         prompt = prompt_loader.render(
             name=prompt_name,
-            raw_inputs=state["raw_inputs"],
+            raw_inputs=inputs,
             employee_history=state.get("employee_history") or [],
             company_kb=state.get("company_kb") or [],
             employee_id=state["employee_id"],
@@ -117,6 +143,12 @@ def create_evaluation_graph(
                 audit["confidence_score"] = min(0.95, 0.5 + evidence_count * 0.1)
             data["audit"] = audit
 
+            # 输出护栏：脱敏与敏感词检查
+            emp_view = data.get("employee_view", {})
+            mgr_view = data.get("manager_view", {})
+            output_guard.sanitize_employee_view(emp_view)
+            output_guard.sanitize_manager_view(mgr_view)
+
             evaluation = EmployeeEvaluation.model_validate(data)
             return {
                 **state,
@@ -160,6 +192,7 @@ def create_evaluation_graph(
 
     # 构建图
     builder = StateGraph(EvaluationState)
+    builder.add_node("input_sanitizer", input_sanitizer)
     builder.add_node("retrieve_context", retrieve_context)
     builder.add_node("build_prompt", build_prompt)
     builder.add_node("call_llm", call_llm)
@@ -167,7 +200,8 @@ def create_evaluation_graph(
     builder.add_node("hr_audit", hr_audit)
     builder.add_node("finalize", finalize)
 
-    builder.add_edge(START, "retrieve_context")
+    builder.add_edge(START, "input_sanitizer")
+    builder.add_edge("input_sanitizer", "retrieve_context")
     builder.add_edge("retrieve_context", "build_prompt")
     builder.add_edge("build_prompt", "call_llm")
     builder.add_edge("call_llm", "parse_output")
