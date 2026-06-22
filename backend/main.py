@@ -9,13 +9,16 @@ from fastapi import FastAPI
 from api.deps import AppState
 from api.routes import router
 from core.config import get_settings
+from core.database import close_db, init_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    await init_db()
     app.state.app_state = AppState(settings)
     yield
+    await close_db()
 
 
 app = FastAPI(

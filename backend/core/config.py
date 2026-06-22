@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     app_name: str = "EmpValue-AI"
     debug: bool = False
 
+    # 数据库：默认 SQLite（异步），生产可改为 postgresql+asyncpg://...
+    database_url: str = "sqlite+aiosqlite:///./empvalue_ai.db"
+
     # 模型档位强制设定，可选 auto / L0 / L1 / L2 / L3
     model_tier: Literal["auto", "L0", "L1", "L2", "L3"] = "auto"
 

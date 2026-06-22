@@ -2,27 +2,99 @@
 FastAPI 路由定义
 """
 
+import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from agent.tools import DummyCompanyKB, DummyMemoryStore
-from api.deps import AppState, get_app_state
+from api.deps import (
+    AppState,
+    get_app_state,
+    get_approval_service,
+    get_audit_service,
+    get_evaluation_service,
+)
 from auth.rbac import Role, can_access, require_role
 from core.tracing import tracer
-from schemas import EmployeeEvaluation
 from services.approval_service import ApprovalService
 from services.audit_service import AuditService
+from services.evaluation_service import EvaluationService
 
 router = APIRouter(prefix="/api/v1")
 
 
+@router.post("/inputs", response_model=Dict[str, Any])
+async def create_input(
+    payload: Dict[str, Any],
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    audit_service: AuditService = Depends(get_audit_service),
+):
+    """提交员工日报/任务进度等原始输入"""
+    employee_id = payload.get("employee_id")
+    period = payload.get("period")
+    content = payload.get("content")
+
+    if not employee_id or not period or not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="employee_id、period、content 必填",
+        )
+
+    input_id = payload.get("input_id") or f"input-{uuid.uuid4().hex[:8]}"
+    raw = await eval_service.create_raw_input(
+        {
+            "input_id": input_id,
+            "employee_id": employee_id,
+            "period": period,
+            "type": payload.get("type", "daily_report"),
+            "content": content,
+            "attachments": payload.get("attachments", []),
+        }
+    )
+
+    await audit_service.log(
+        actor_id=employee_id,
+        action="create_input",
+        employee_id=employee_id,
+        details={"input_id": input_id, "period": period, "type": raw.type},
+    )
+
+    return {
+        "input_id": raw.input_id,
+        "employee_id": raw.employee_id,
+        "period": raw.period,
+        "type": raw.type,
+        "content": raw.content,
+        "created_at": raw.created_at.isoformat(),
+    }
+
+
+@router.get("/inputs/{input_id}")
+async def get_input(
+    input_id: str,
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+):
+    """查询原始输入"""
+    raw = await eval_service.get_raw_input(input_id)
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="输入不存在")
+    return {
+        "input_id": raw.input_id,
+        "employee_id": raw.employee_id,
+        "period": raw.period,
+        "type": raw.type,
+        "content": raw.content,
+        "attachments": raw.attachments,
+        "created_at": raw.created_at.isoformat(),
+    }
 
 
 @router.post("/evaluations", response_model=Dict[str, Any])
 async def create_evaluation(
     payload: Dict[str, Any],
     app_state: AppState = Depends(get_app_state),
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ):
     """触发一次员工评估"""
     employee_id = payload.get("employee_id")
@@ -35,13 +107,24 @@ async def create_evaluation(
             detail="employee_id 和 period 必填",
         )
 
+    # 确保用户存在
+    await eval_service.ensure_user_exists(employee_id, role="employee")
+
+    # 如果没有传入 raw_inputs，从数据库拉取
+    if not raw_inputs:
+        inputs = await eval_service.list_raw_inputs(employee_id=employee_id, period=period)
+        raw_inputs = [
+            {"input_id": i.input_id, "type": i.type, "content": i.content}
+            for i in inputs
+        ]
+
     with tracer.trace(
         name="create_evaluation",
         evaluation_id=None,
         employee_id=employee_id,
         metadata={"period": period, "input_count": len(raw_inputs)},
     ) as trace:
-        graph = app_state.get_graph()
+        graph = app_state.get_graph(eval_service)
         initial_state = {
             "employee_id": employee_id,
             "period": period,
@@ -61,6 +144,18 @@ async def create_evaluation(
 
         evaluation = result.get("parsed_evaluation")
         if evaluation:
+            # 持久化到数据库
+            await eval_service.create_evaluation(evaluation)
+            # 同步写入记忆
+            await eval_service.add_memory(
+                employee_id,
+                {
+                    "period": period,
+                    "summary": evaluation.get("employee_view", {}).get("summary", ""),
+                    "overall_score": evaluation.get("overall_score"),
+                    "status": evaluation.get("status"),
+                },
+            )
             trace.update(
                 output=evaluation,
                 metadata={
@@ -69,7 +164,7 @@ async def create_evaluation(
                     "overall_score": evaluation.get("overall_score"),
                 },
             )
-            app_state.audit_service.log(
+            await audit_service.log(
                 actor_id="system",
                 action="create_evaluation",
                 evaluation_id=evaluation.get("evaluation_id"),
@@ -87,16 +182,67 @@ async def create_evaluation(
 async def get_evaluation(
     evaluation_id: str,
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    eval_service: EvaluationService = Depends(get_evaluation_service),
 ):
-    """
-    获取评估结果
-    实际应从数据库查询并按角色过滤视图
-    当前返回占位说明
-    """
+    """获取评估结果，按角色过滤可见字段"""
+    evaluation = await eval_service.get_evaluation(evaluation_id)
+    if not evaluation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="评估不存在")
+
+    data = {
+        "evaluation_id": evaluation.evaluation_id,
+        "employee_id": evaluation.employee_id,
+        "period": evaluation.period,
+        "overall_score": evaluation.overall_score,
+        "status": evaluation.status,
+        "created_at": evaluation.created_at.isoformat(),
+        "approved_at": evaluation.approved_at.isoformat() if evaluation.approved_at else None,
+        "approver_id": evaluation.approver_id,
+    }
+
+    if can_access(role, "employee_view"):
+        data["employee_view"] = evaluation.employee_view
+    if can_access(role, "manager_view"):
+        data["manager_view"] = evaluation.manager_view
+    if can_access(role, "audit"):
+        data["audit"] = evaluation.audit
+
+    return data
+
+
+@router.get("/evaluations/{evaluation_id}/employee-view")
+async def get_employee_view(
+    evaluation_id: str,
+    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+):
+    """员工可见视图"""
+    evaluation = await eval_service.get_evaluation(evaluation_id)
+    if not evaluation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="评估不存在")
     return {
-        "evaluation_id": evaluation_id,
-        "message": "请连接数据库实现持久化查询",
-        "accessible_views": [v for v in ["employee_view", "manager_view", "audit"] if can_access(role, v)],
+        "evaluation_id": evaluation.evaluation_id,
+        "employee_id": evaluation.employee_id,
+        "period": evaluation.period,
+        "employee_view": evaluation.employee_view,
+    }
+
+
+@router.get("/evaluations/{evaluation_id}/manager-view")
+async def get_manager_view(
+    evaluation_id: str,
+    role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+):
+    """管理/HR 可见视图"""
+    evaluation = await eval_service.get_evaluation(evaluation_id)
+    if not evaluation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="评估不存在")
+    return {
+        "evaluation_id": evaluation.evaluation_id,
+        "employee_id": evaluation.employee_id,
+        "period": evaluation.period,
+        "manager_view": evaluation.manager_view,
     }
 
 
@@ -105,15 +251,22 @@ async def approve_evaluation(
     evaluation_id: str,
     payload: Dict[str, Any],
     app_state: AppState = Depends(get_app_state),
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    approval_service: ApprovalService = Depends(get_approval_service),
+    audit_service: AuditService = Depends(get_audit_service),
     role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """审批通过评估"""
-    current_status = payload.get("current_status", "ai_drafted")
+    evaluation = await eval_service.get_evaluation(evaluation_id)
+    if not evaluation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="评估不存在")
+
+    current_status = payload.get("current_status", evaluation.status)
     actor_id = payload.get("actor_id", "unknown")
     comment = payload.get("comment")
 
     try:
-        new_status = app_state.approval_service.transition(
+        new_status = await approval_service.transition(
             evaluation_id=evaluation_id,
             current_status=current_status,
             action="approve",
@@ -121,7 +274,12 @@ async def approve_evaluation(
             actor_role=role.value,
             comment=comment,
         )
-        app_state.audit_service.log(
+        await eval_service.update_status(
+            evaluation_id=evaluation_id,
+            new_status=new_status,
+            approver_id=actor_id,
+        )
+        await audit_service.log(
             actor_id=actor_id,
             action="approve_evaluation",
             evaluation_id=evaluation_id,
@@ -136,16 +294,22 @@ async def approve_evaluation(
 async def reject_evaluation(
     evaluation_id: str,
     payload: Dict[str, Any],
-    app_state: AppState = Depends(get_app_state),
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    approval_service: ApprovalService = Depends(get_approval_service),
+    audit_service: AuditService = Depends(get_audit_service),
     role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """驳回评估"""
-    current_status = payload.get("current_status", "ai_drafted")
+    evaluation = await eval_service.get_evaluation(evaluation_id)
+    if not evaluation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="评估不存在")
+
+    current_status = payload.get("current_status", evaluation.status)
     actor_id = payload.get("actor_id", "unknown")
     comment = payload.get("comment")
 
     try:
-        new_status = app_state.approval_service.transition(
+        new_status = await approval_service.transition(
             evaluation_id=evaluation_id,
             current_status=current_status,
             action="reject",
@@ -153,7 +317,11 @@ async def reject_evaluation(
             actor_role=role.value,
             comment=comment,
         )
-        app_state.audit_service.log(
+        await eval_service.update_status(
+            evaluation_id=evaluation_id,
+            new_status=new_status,
+        )
+        await audit_service.log(
             actor_id=actor_id,
             action="reject_evaluation",
             evaluation_id=evaluation_id,
@@ -164,15 +332,152 @@ async def reject_evaluation(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+@router.post("/evaluations/{evaluation_id}/feedback")
+async def create_feedback(
+    evaluation_id: str,
+    payload: Dict[str, Any],
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    audit_service: AuditService = Depends(get_audit_service),
+    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """员工反馈/申诉"""
+    evaluation = await eval_service.get_evaluation(evaluation_id)
+    if not evaluation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="评估不存在")
+
+    content = payload.get("content")
+    feedback_type = payload.get("type", "feedback")
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="content 必填",
+        )
+
+    feedback_id = payload.get("feedback_id") or f"FB-{uuid.uuid4().hex[:8]}"
+    feedback = await eval_service.create_feedback(
+        {
+            "feedback_id": feedback_id,
+            "evaluation_id": evaluation_id,
+            "employee_id": evaluation.employee_id,
+            "type": feedback_type,
+            "content": content,
+        }
+    )
+
+    await audit_service.log(
+        actor_id=payload.get("actor_id", "unknown"),
+        action="create_feedback",
+        evaluation_id=evaluation_id,
+        employee_id=evaluation.employee_id,
+        details={"feedback_id": feedback_id, "type": feedback_type},
+    )
+
+    return {
+        "feedback_id": feedback.feedback_id,
+        "evaluation_id": feedback.evaluation_id,
+        "type": feedback.type,
+        "content": feedback.content,
+        "created_at": feedback.created_at.isoformat(),
+    }
+
+
 @router.get("/evaluations/{evaluation_id}/audit-logs")
 async def get_evaluation_audit_logs(
     evaluation_id: str,
-    app_state: AppState = Depends(get_app_state),
+    audit_service: AuditService = Depends(get_audit_service),
     role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """获取评估审计日志"""
-    logs = app_state.audit_service.get_logs(evaluation_id=evaluation_id)
-    return {"evaluation_id": evaluation_id, "logs": [log.model_dump(mode="json") for log in logs]}
+    logs = await audit_service.get_logs(evaluation_id=evaluation_id)
+    return {
+        "evaluation_id": evaluation_id,
+        "logs": [
+            {
+                "log_id": log.log_id,
+                "actor_id": log.actor_id,
+                "action": log.action,
+                "details": log.details,
+                "created_at": log.created_at.isoformat(),
+            }
+            for log in logs
+        ],
+    }
+
+
+@router.get("/employees/{employee_id}/dashboard")
+async def get_employee_dashboard(
+    employee_id: str,
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """员工个人成长看板"""
+    evaluations = await eval_service.list_evaluations(
+        employee_id=employee_id, status="approved", limit=10
+    )
+    latest = evaluations[0] if evaluations else None
+    return {
+        "employee_id": employee_id,
+        "latest_evaluation": (
+            {
+                "evaluation_id": latest.evaluation_id,
+                "period": latest.period,
+                "overall_score": latest.overall_score,
+                "employee_view": latest.employee_view,
+            }
+            if latest
+            else None
+        ),
+        "history_count": len(evaluations),
+    }
+
+
+@router.get("/employees/{employee_id}/history")
+async def get_employee_history(
+    employee_id: str,
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """跨周期能力演进"""
+    evaluations = await eval_service.list_evaluations(
+        employee_id=employee_id, status="approved", limit=50
+    )
+    return {
+        "employee_id": employee_id,
+        "evaluations": [
+            {
+                "evaluation_id": e.evaluation_id,
+                "period": e.period,
+                "overall_score": e.overall_score,
+                "employee_view": {
+                    "summary": e.employee_view.get("summary", ""),
+                    "growth_areas": e.employee_view.get("growth_areas", []),
+                },
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in evaluations
+        ],
+    }
+
+
+@router.get("/teams/{team_id}/analytics")
+async def get_team_analytics(
+    team_id: str,
+    payload: Optional[Dict[str, Any]] = None,
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """团队分析（管理端）
+    请求体示例：{"members": ["E1001", "E1002", "E1003"]}
+    """
+    payload = payload or {}
+    members = payload.get("members", [])
+    if not members:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="members 列表必填",
+        )
+    analytics = await eval_service.get_team_analytics(members)
+    return {"team_id": team_id, **analytics}
 
 
 @router.get("/admin/model-status")
@@ -182,3 +487,21 @@ async def get_model_status(
 ):
     """获取模型状态与推荐档位"""
     return app_state.model_router.hardware_report()
+
+
+@router.post("/admin/model-switch")
+async def switch_model_tier(
+    payload: Dict[str, Any],
+    app_state: AppState = Depends(get_app_state),
+    role: Role = Depends(require_role(Role.ADMIN)),
+):
+    """手动切换模型档位"""
+    tier = payload.get("tier")
+    valid_tiers = ["auto", "L0", "L1", "L2", "L3"]
+    if tier not in valid_tiers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"tier 必须是其中之一: {valid_tiers}",
+        )
+    app_state.settings.model_tier = tier
+    return {"tier": tier, "recommended": app_state.model_router.get_recommended_tier()}

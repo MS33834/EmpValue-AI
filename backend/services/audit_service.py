@@ -3,37 +3,23 @@
 记录所有对评估结果的关键操作，便于 HR 复核与合规追溯。
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-
-class AuditLog(BaseModel):
-    """审计日志条目"""
-
-    log_id: str
-    evaluation_id: Optional[str] = None
-    employee_id: Optional[str] = None
-    actor_id: str
-    action: str
-    details: Optional[Dict] = None
-    ip_address: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+from models import AuditLog
 
 
 class AuditService:
-    """审计服务（内存实现，生产环境应持久化到数据库）"""
+    """审计服务（数据库实现）"""
 
-    def __init__(self):
-        self._logs: List[AuditLog] = []
-        self._counter = 0
+    def __init__(self, session: AsyncSession):
+        self.session = session
 
-    def _next_id(self) -> str:
-        self._counter += 1
-        return f"LOG-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{self._counter:06d}"
-
-    def log(
+    async def log(
         self,
         actor_id: str,
         action: str,
@@ -43,26 +29,28 @@ class AuditService:
         ip_address: Optional[str] = None,
     ) -> AuditLog:
         entry = AuditLog(
-            log_id=self._next_id(),
+            log_id=f"LOG-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}",
             actor_id=actor_id,
             action=action,
             evaluation_id=evaluation_id,
             employee_id=employee_id,
-            details=details,
+            details=details or {},
             ip_address=ip_address,
         )
-        self._logs.append(entry)
+        self.session.add(entry)
+        await self.session.commit()
         return entry
 
-    def get_logs(
+    async def get_logs(
         self,
         evaluation_id: Optional[str] = None,
         employee_id: Optional[str] = None,
         limit: int = 100,
     ) -> List[AuditLog]:
-        logs = self._logs
+        stmt = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
         if evaluation_id:
-            logs = [l for l in logs if l.evaluation_id == evaluation_id]
+            stmt = stmt.where(AuditLog.evaluation_id == evaluation_id)
         if employee_id:
-            logs = [l for l in logs if l.employee_id == employee_id]
-        return logs[-limit:]
+            stmt = stmt.where(AuditLog.employee_id == employee_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
