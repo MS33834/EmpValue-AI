@@ -173,6 +173,34 @@ def test_get_evaluation_detail(client, mock_app_state, created_evaluation_id):
     assert "manager_view" in data
 
 
+def test_get_evaluation_employee_view(client, mock_app_state, created_evaluation_id):
+    resp = client.get(f"/api/v1/evaluations/{created_evaluation_id}/employee-view")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_id"] == created_evaluation_id
+    assert "summary" in data["employee_view"]
+    assert "growth_areas" in data["employee_view"]
+
+
+def test_get_evaluation_manager_view(client, mock_app_state, created_evaluation_id):
+    resp = client.get(f"/api/v1/evaluations/{created_evaluation_id}/manager-view")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_id"] == created_evaluation_id
+    assert "harsh_assessment" in data["manager_view"]
+
+
+def test_create_evaluation_feedback(client, mock_app_state, created_evaluation_id):
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/feedback",
+        json={"content": "我认为评估中关于协作的部分可以更具体", "type": "feedback", "actor_id": "E1001"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_id"] == created_evaluation_id
+    assert data["content"]
+
+
 def test_get_employee_dashboard(client, mock_app_state, created_evaluation_id):
     resp = client.get("/api/v1/employees/E1001/dashboard")
     assert resp.status_code == 200

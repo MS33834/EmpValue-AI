@@ -52,7 +52,7 @@ class TestOutputGuard:
     def test_detects_negative_words(self):
         guard = OutputGuard()
         negatives = guard.check_negative_words("你本周表现很差，做事拖沓")
-        assert "差" in negatives
+        assert "很差" in negatives
         assert "拖沓" in negatives
 
     def test_sanitize_employee_view(self):

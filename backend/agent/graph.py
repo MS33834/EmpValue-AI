@@ -125,10 +125,10 @@ def create_evaluation_graph(
         raw = state.get("llm_raw_output", "")
         try:
             data = json.loads(raw)
-            # 补充必要字段
-            data.setdefault("evaluation_id", f"EV-{state['period']}-{state['employee_id']}-{uuid.uuid4().hex[:8]}")
-            data.setdefault("employee_id", state["employee_id"])
-            data.setdefault("period", state["period"])
+            # 补充/覆盖必要字段（防止 LLM 漏填或 Mock 数据不完整）
+            data["evaluation_id"] = f"EV-{state['period']}-{state['employee_id']}-{uuid.uuid4().hex[:8]}"
+            data["employee_id"] = state["employee_id"]
+            data["period"] = state["period"]
             data.setdefault("status", "ai_drafted")
 
             # 合并审计信息

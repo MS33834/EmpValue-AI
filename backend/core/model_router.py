@@ -144,6 +144,11 @@ class ModelRouter:
         tier_info = self._tier_map[selected_tier]
 
         if tier_info.provider_type == "cloud":
+            if not self.settings.openai_api_key:
+                logger.warning(
+                    f"档位 {selected_tier} 为云端模型，但 OPENAI_API_KEY 未配置，"
+                    "调用将失败或回退到本地模型"
+                )
             config = ProviderConfig(
                 model_name=tier_info.model_name,
                 base_url=self.settings.openai_base_url,
