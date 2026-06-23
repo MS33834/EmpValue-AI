@@ -117,7 +117,7 @@ async def test_evaluation_graph_happy_path(tmp_path):
     }
 
     result = await graph.ainvoke(initial_state)
-    assert result["status"] == "approved"
+    assert result["status"] == "manager_review"
     assert result["parsed_evaluation"] is not None
     assert result["parsed_evaluation"]["overall_score"] == 82.0
 

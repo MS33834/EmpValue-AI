@@ -110,7 +110,7 @@ def test_create_evaluation(client, mock_app_state):
     resp = client.post("/api/v1/evaluations", json=payload)
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "approved"
+    assert data["status"] == "manager_review"
     assert data["evaluation"]["employee_id"] == "E1001"
 
 
@@ -132,7 +132,7 @@ def created_evaluation_id(client, mock_app_state):
 def test_approve_evaluation(client, mock_app_state, created_evaluation_id):
     resp = client.post(
         f"/api/v1/evaluations/{created_evaluation_id}/approve",
-        json={"current_status": "ai_drafted", "actor_id": "M001", "comment": "同意"},
+        json={"current_status": "manager_review", "actor_id": "M001", "comment": "同意"},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -143,7 +143,7 @@ def test_reject_illegal_transition(client, mock_app_state, created_evaluation_id
     # 先审批通过
     client.post(
         f"/api/v1/evaluations/{created_evaluation_id}/approve",
-        json={"current_status": "ai_drafted", "actor_id": "M001"},
+        json={"current_status": "manager_review", "actor_id": "M001"},
     )
     # 再次 approve 已 approved 的状态应返回 400
     resp = client.post(
@@ -199,6 +199,60 @@ def test_create_evaluation_feedback(client, mock_app_state, created_evaluation_i
     data = resp.json()
     assert data["evaluation_id"] == created_evaluation_id
     assert data["content"]
+
+
+def test_get_pending_approvals(client, mock_app_state, created_evaluation_id):
+    resp = client.get("/api/v1/manager/pending-approvals")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert any(e["evaluation_id"] == created_evaluation_id for e in data["pending"])
+
+
+def test_request_hr_review(client, mock_app_state, created_evaluation_id):
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/request-hr-review",
+        json={"current_status": "manager_review", "actor_id": "M001", "comment": "分数异常需复核"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "hr_audit"
+
+
+def test_get_hr_audit_queue(client, mock_app_state, created_evaluation_id):
+    # 先把评估送进 HR 复核
+    client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/request-hr-review",
+        json={"current_status": "manager_review", "actor_id": "M001"},
+    )
+    with patch("auth.rbac.get_current_user_role", return_value=Role.HR):
+        resp = client.get("/api/v1/hr/audit-queue")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert any(e["evaluation_id"] == created_evaluation_id for e in data["pending"])
+
+
+def test_appeal_evaluation(client, mock_app_state, created_evaluation_id):
+    # 先审批通过再申诉
+    client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/approve",
+        json={"current_status": "manager_review", "actor_id": "M001"},
+    )
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/appeal",
+        json={"current_status": "approved", "actor_id": "E1001", "comment": "对评分有异议"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "manager_review"
+
+
+def test_re_evaluate(client, mock_app_state, created_evaluation_id):
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/re-evaluate",
+        json={"actor_id": "M001", "feedback": ["请重点关注代码质量"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_id"] == created_evaluation_id
+    assert data["status"] in ("manager_review", "hr_audit")
 
 
 def test_get_employee_dashboard(client, mock_app_state, created_evaluation_id):

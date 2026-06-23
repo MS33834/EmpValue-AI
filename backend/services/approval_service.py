@@ -19,7 +19,7 @@ class ApprovalService:
         "ai_drafted": {"approve": "approved", "reject": "rejected", "request_hr_review": "hr_audit"},
         "manager_review": {"approve": "approved", "reject": "rejected", "request_hr_review": "hr_audit"},
         "hr_audit": {"approve": "approved", "reject": "rejected", "request_manager_review": "manager_review"},
-        "approved": {},
+        "approved": {"appeal": "manager_review"},
         "rejected": {"appeal": "manager_review"},
     }
 

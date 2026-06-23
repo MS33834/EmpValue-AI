@@ -94,6 +94,26 @@ class EvaluationService:
         await self.session.refresh(evaluation)
         return evaluation
 
+    async def update_evaluation(
+        self,
+        evaluation_id: str,
+        evaluation_data: Dict,
+    ) -> Optional[Evaluation]:
+        """完整更新评估内容（用于重新评估）"""
+        evaluation = await self.get_evaluation(evaluation_id)
+        if not evaluation:
+            return None
+        evaluation.employee_view = evaluation_data.get("employee_view", evaluation.employee_view)
+        evaluation.manager_view = evaluation_data.get("manager_view", evaluation.manager_view)
+        evaluation.audit = evaluation_data.get("audit", evaluation.audit)
+        evaluation.overall_score = evaluation_data.get("overall_score", evaluation.overall_score)
+        evaluation.status = evaluation_data.get("status", evaluation.status)
+        if evaluation.status == "approved":
+            evaluation.approved_at = datetime.now(timezone.utc)
+        await self.session.commit()
+        await self.session.refresh(evaluation)
+        return evaluation
+
     async def list_evaluations(
         self,
         employee_id: Optional[str] = None,

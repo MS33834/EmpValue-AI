@@ -158,14 +158,15 @@ def create_evaluation_graph(
         except (json.JSONDecodeError, ValidationError) as e:
             return {**state, "error": f"输出解析失败: {e}", "status": "error"}
 
-    async def manager_review_gate(state: EvaluationState) -> Literal["hr_audit", "approved", "rejected"]:
+    async def manager_review_gate(state: EvaluationState) -> Literal["hr_audit", "manager_review", "rejected"]:
         """
-        模拟主管审批节点
-        实际运行时由 API 层写入 manager_review_comment 并恢复图执行
+        评估生成完成后的自动路由：
+        - 高风险或低分自动进入 HR 复核
+        - 其余进入主管待审批
+        实际审批动作由 API 层驱动状态机完成
         """
         if state.get("error"):
             return "rejected"
-        # 高风险或低分自动进入 HR 复核
         parsed = state.get("parsed_evaluation")
         if parsed:
             score = parsed.get("overall_score", 100)
@@ -173,22 +174,23 @@ def create_evaluation_graph(
             has_critical = any(r.get("level") == "critical" for r in risk_flags)
             if score < 60 or has_critical:
                 return "hr_audit"
-        # 默认通过，进入 approved（实际应等待主管操作，此处为简化）
-        return "approved"
+        return "manager_review"
 
-    async def finalize(state: EvaluationState) -> EvaluationState:
-        """最终状态节点"""
-        final_status = state.get("status")
-        if final_status == "error":
-            return state
-        # 保留上游节点设置的状态（approved 或 hr_audit 复核完成后的状态）
-        if final_status in ("approved", "hr_audit"):
-            return state
-        return {**state, "status": "approved"}
+    async def manager_review(state: EvaluationState) -> EvaluationState:
+        """主管审批中断点：等待主管操作"""
+        parsed = state.get("parsed_evaluation") or {}
+        parsed["status"] = "manager_review"
+        return {**state, "status": "manager_review", "parsed_evaluation": parsed}
 
     async def hr_audit(state: EvaluationState) -> EvaluationState:
-        """HR 复核节点（简化版）"""
-        return {**state, "status": "hr_audit"}
+        """HR 复核节点"""
+        parsed = state.get("parsed_evaluation") or {}
+        parsed["status"] = "hr_audit"
+        return {**state, "status": "hr_audit", "parsed_evaluation": parsed}
+
+    async def finalize(state: EvaluationState) -> EvaluationState:
+        """最终状态节点：保留上游设置的状态"""
+        return state
 
     # 构建图
     builder = StateGraph(EvaluationState)
@@ -197,6 +199,7 @@ def create_evaluation_graph(
     builder.add_node("build_prompt", build_prompt)
     builder.add_node("call_llm", call_llm)
     builder.add_node("parse_output", parse_output)
+    builder.add_node("manager_review", manager_review)
     builder.add_node("hr_audit", hr_audit)
     builder.add_node("finalize", finalize)
 
@@ -210,10 +213,11 @@ def create_evaluation_graph(
         manager_review_gate,
         {
             "hr_audit": "hr_audit",
-            "approved": "finalize",
+            "manager_review": "manager_review",
             "rejected": END,
         },
     )
+    builder.add_edge("manager_review", "finalize")
     builder.add_edge("hr_audit", "finalize")
     builder.add_edge("finalize", END)
 
