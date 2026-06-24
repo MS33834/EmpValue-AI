@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     langfuse_secret_key: Optional[str] = None
     langfuse_host: str = "https://cloud.langfuse.com"
 
+    # JWT 认证配置
+    jwt_secret_key: str = "empvalue-ai-dev-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 小时
+    # 演示模式：未配置或为 True 时允许通过 x-user-role / x-user-id header 伪造身份
+    auth_demo_mode: bool = True
+
 
 @lru_cache()
 def get_settings() -> Settings:

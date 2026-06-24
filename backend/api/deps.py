@@ -11,6 +11,7 @@ from agent.tools import AgentToolkit
 from core.config import Settings, get_settings
 from core.database import get_db
 from core.model_router import ModelRouter
+from core.multimodal import MultimodalCleaner
 from memory.vector_store import ChromaCompanyKB, ChromaMemoryStore
 from services.approval_service import ApprovalService
 from services.audit_service import AuditService
@@ -26,6 +27,7 @@ class AppState:
         self.prompt_loader = PromptLoader()
         self.memory_store = ChromaMemoryStore(settings=settings)
         self.company_kb = ChromaCompanyKB(settings=settings)
+        self.multimodal_cleaner = MultimodalCleaner()
 
     def get_graph(self, eval_service: EvaluationService):
         """创建并返回一个与当前数据库会话绑定的 LangGraph 实例"""
@@ -37,6 +39,7 @@ class AppState:
             toolkit=toolkit,
             model_router=self.model_router,
             prompt_loader=self.prompt_loader,
+            multimodal_cleaner=self.multimodal_cleaner,
         )
 
 

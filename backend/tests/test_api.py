@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from agent.graph import create_evaluation_graph
+from agent.graph import create_evaluation_graph, create_evaluation_graph_with_interrupt
 from agent.prompt_loader import PromptLoader
 from agent.tools import AgentToolkit, DummyCompanyKB, DummyMemoryStore
 from api.deps import AppState
@@ -78,10 +78,20 @@ def mock_app_state(client):
 
     state.memory_store = DummyMemoryStore()
     state.company_kb = DummyCompanyKB()
+    mock_toolkit = AgentToolkit(DummyMemoryStore(), DummyCompanyKB())
+    mock_router = MockModelRouter(response)
+    mock_prompt_loader = PromptLoader(prompt_dir)
+
     state.get_graph = lambda eval_service: create_evaluation_graph(
-        toolkit=AgentToolkit(DummyMemoryStore(), DummyCompanyKB()),
-        model_router=MockModelRouter(response),
-        prompt_loader=PromptLoader(prompt_dir),
+        toolkit=mock_toolkit,
+        model_router=mock_router,
+        prompt_loader=mock_prompt_loader,
+    )
+    # 预创建带 interrupt 的图（使用 mock router），供 interrupt 接口测试使用
+    state._interrupt_graph = create_evaluation_graph_with_interrupt(
+        toolkit=mock_toolkit,
+        model_router=mock_router,
+        prompt_loader=mock_prompt_loader,
     )
     client.app.state.app_state = state
     return state
@@ -323,3 +333,217 @@ def test_create_input(client, mock_app_state):
     data = resp.json()
     assert data["employee_id"] == "E1002"
     assert data["input_id"].startswith("input-")
+
+
+# ---------------- JWT 认证测试 ----------------
+
+
+def test_auth_register_and_login(client, mock_app_state):
+    """注册 → 登录 → /me 全流程"""
+    register_payload = {
+        "user_id": "E2001",
+        "name": "测试员工",
+        "email": "test-register@empvalue.ai",
+        "password": "test123456",
+        "role": "employee",
+        "department": "测试部",
+    }
+    resp = client.post("/api/v1/auth/register", json=register_payload)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["access_token"]
+    assert data["role"] == "employee"
+    assert data["user_id"] == "E2001"
+
+    # 登录
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "test-register@empvalue.ai", "password": "test123456"},
+    )
+    assert resp.status_code == 200
+    token = resp.json()["access_token"]
+    assert token
+
+    # /me
+    resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    me = resp.json()
+    assert me["user_id"] == "E2001"
+    assert me["email"] == "test-register@empvalue.ai"
+
+
+def test_auth_login_wrong_password(client, mock_app_state):
+    """错误密码应返回 401"""
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "user_id": "E2002",
+            "name": "测试员工2",
+            "email": "wrong-pwd@empvalue.ai",
+            "password": "correct123",
+            "role": "employee",
+        },
+    )
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "wrong-pwd@empvalue.ai", "password": "wrong123"},
+    )
+    assert resp.status_code == 401
+
+
+def test_auth_register_duplicate_email(client, mock_app_state):
+    """重复邮箱应返回 409"""
+    payload = {
+        "user_id": "E2003",
+        "name": "测试员工3",
+        "email": "dup@empvalue.ai",
+        "password": "test123456",
+        "role": "employee",
+    }
+    resp = client.post("/api/v1/auth/register", json=payload)
+    assert resp.status_code == 201
+    payload["user_id"] = "E2004"
+    resp = client.post("/api/v1/auth/register", json=payload)
+    assert resp.status_code == 409
+
+
+def test_auth_jwt_blocks_invalid_token(client, mock_app_state):
+    """无效 token 应返回 401"""
+    resp = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": "Bearer invalid.token.here"},
+    )
+    assert resp.status_code == 401
+
+
+def test_auth_jwt_role_enforced(client, mock_app_state):
+    """JWT token 中的角色应被强制校验"""
+    # 注册 employee
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "user_id": "E2005",
+            "name": "普通员工",
+            "email": "role-test@empvalue.ai",
+            "password": "test123456",
+            "role": "employee",
+        },
+    )
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"email": "role-test@empvalue.ai", "password": "test123456"},
+    ).json()["access_token"]
+
+    # employee 不应能访问 admin 接口
+    resp = client.get(
+        "/api/v1/admin/model-status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_auth_seed_demo_users(client, mock_app_state):
+    """初始化演示账号"""
+    resp = client.post("/api/v1/auth/seed-demo-users")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "created" in data
+    # 用演示账号登录
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "employee@empvalue.ai", "password": "empvalue123"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "employee"
+
+
+# ---------------- LangGraph 原生 interrupt 测试 ----------------
+
+
+def test_interrupt_flow_approve(client, mock_app_state):
+    """interrupt 工作流：启动 → 暂停 → 恢复审批通过"""
+    payload = {
+        "employee_id": "E3001",
+        "period": "2026-W26",
+        "raw_inputs": [
+            {"input_id": "daily-int-001", "content": "完成了 interrupt 审批流开发"},
+        ],
+    }
+    # 1. 启动，应触发 interrupt
+    resp = client.post("/api/v1/evaluations-interrupt", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "awaiting_review"
+    thread_id = data["thread_id"]
+    assert thread_id.startswith("thread-")
+    assert data["interrupt"]["node"] == "manager_review"
+
+    # 2. 查询状态
+    resp = client.get(
+        f"/api/v1/evaluations-interrupt/{thread_id}/state",
+        headers={"x-user-role": "manager"},
+    )
+    assert resp.status_code == 200
+    state = resp.json()
+    assert state["thread_id"] == thread_id
+
+    # 3. 恢复：审批通过
+    resp = client.post(
+        f"/api/v1/evaluations-interrupt/{thread_id}/resume",
+        json={"action": "approve", "comment": "同意"},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["status"] == "approved"
+    assert result["evaluation"]["status"] == "approved"
+    assert result["evaluation"]["approver_id"] == "M001"
+
+
+def test_interrupt_flow_reject(client, mock_app_state):
+    """interrupt 工作流：驳回"""
+    payload = {
+        "employee_id": "E3002",
+        "period": "2026-W26",
+        "raw_inputs": [
+            {"input_id": "daily-int-002", "content": "测试驳回流程"},
+        ],
+    }
+    resp = client.post("/api/v1/evaluations-interrupt", json=payload)
+    thread_id = resp.json()["thread_id"]
+
+    resp = client.post(
+        f"/api/v1/evaluations-interrupt/{thread_id}/resume",
+        json={"action": "reject", "comment": "证据不足"},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "rejected"
+
+
+def test_interrupt_resume_unknown_thread(client, mock_app_state):
+    """恢复不存在的线程应 404"""
+    resp = client.post(
+        "/api/v1/evaluations-interrupt/nonexistent-thread/resume",
+        json={"action": "approve"},
+        headers={"x-user-role": "manager"},
+    )
+    assert resp.status_code == 404
+
+
+def test_interrupt_resume_invalid_action(client, mock_app_state):
+    """恢复时 action 非法应 400"""
+    payload = {
+        "employee_id": "E3003",
+        "period": "2026-W26",
+        "raw_inputs": [{"input_id": "d1", "content": "测试非法 action"}],
+    }
+    resp = client.post("/api/v1/evaluations-interrupt", json=payload)
+    thread_id = resp.json()["thread_id"]
+
+    resp = client.post(
+        f"/api/v1/evaluations-interrupt/{thread_id}/resume",
+        json={"action": "invalid_action"},
+        headers={"x-user-role": "manager"},
+    )
+    assert resp.status_code == 400

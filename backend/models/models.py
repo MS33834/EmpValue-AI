@@ -25,6 +25,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(256), nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="employee")
     department: Mapped[str] = mapped_column(String(128), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import AppState
+from api.auth_routes import router as auth_router
 from api.routes import router
 from core.config import get_settings
 from core.database import close_db, init_db
@@ -37,6 +38,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-User-Role", "X-User-Id", "X-Trace-Id"],
 )
 
+app.include_router(auth_router)
 app.include_router(router)
 
 

@@ -11,11 +11,17 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const authStore = useAuthStore()
-  if (authStore.role) {
-    config.headers['x-user-role'] = authStore.role
-  }
-  if (authStore.userId) {
-    config.headers['x-user-id'] = authStore.userId
+  // JWT 模式：发送 Bearer token
+  if (authStore.useJwt && authStore.token) {
+    config.headers['Authorization'] = `Bearer ${authStore.token}`
+  } else {
+    // 演示模式：通过 header 传递角色与用户 ID
+    if (authStore.role) {
+      config.headers['x-user-role'] = authStore.role
+    }
+    if (authStore.userId) {
+      config.headers['x-user-id'] = authStore.userId
+    }
   }
   return config
 })
@@ -75,4 +81,12 @@ export const adminApi = {
   modelStatus: () => api.get('/admin/model-status'),
   switchModel: (tier) => api.post('/admin/model-switch', { tier }),
   auditLogs: (params) => api.get('/admin/audit-logs', { params }),
+}
+
+export const authApi = {
+  login: (email, password) => api.post('/auth/login', { email, password }),
+  register: (payload) => api.post('/auth/register', payload),
+  me: () => api.get('/auth/me'),
+  refresh: () => api.post('/auth/refresh'),
+  seedDemoUsers: () => api.post('/auth/seed-demo-users'),
 }

@@ -924,3 +924,230 @@ async def get_admin_audit_logs(
         page=page,
         page_size=page_size,
     )
+
+
+# ---------------- LangGraph 原生 interrupt 审批流 ----------------
+# 以下接口演示 LangGraph 原生 human-in-the-loop 中断点。
+# 与上方基于 DB 状态机的审批流并存，供需要图内中断的场景使用。
+# thread_store 保存 thread_id → 元信息，生产环境应替换为持久化存储。
+
+thread_store: Dict[str, Dict[str, Any]] = {}
+
+
+def _get_or_create_interrupt_graph(app_state: AppState):
+    """获取或创建带 interrupt 的图实例（惰性创建，复用 checkpointer）"""
+    if not hasattr(app_state, "_interrupt_graph"):
+        from agent.graph import create_evaluation_graph_with_interrupt
+        from agent.tools import AgentToolkit
+
+        toolkit = AgentToolkit(memory=app_state.memory_store, kb=app_state.company_kb)
+        app_state._interrupt_graph = create_evaluation_graph_with_interrupt(
+            toolkit=toolkit,
+            model_router=app_state.model_router,
+            prompt_loader=app_state.prompt_loader,
+            multimodal_cleaner=app_state.multimodal_cleaner,
+        )
+    return app_state._interrupt_graph
+
+
+@router.post("/evaluations-interrupt", response_model=Dict[str, Any])
+async def create_evaluation_with_interrupt(
+    payload: Dict[str, Any],
+    app_state: AppState = Depends(get_app_state),
+    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """
+    启动带原生 interrupt 的评估工作流。
+    图执行到审批节点时会暂停，返回 thread_id 与中断信息。
+    调用方使用 /evaluations-interrupt/{thread_id}/resume 恢复执行。
+    """
+    employee_id = payload.get("employee_id")
+    period = payload.get("period")
+    raw_inputs = payload.get("raw_inputs", [])
+    if not employee_id or not period:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="employee_id 和 period 必填",
+        )
+
+    graph = _get_or_create_interrupt_graph(app_state)
+    thread_id = f"thread-{uuid.uuid4().hex[:12]}"
+    config = {"configurable": {"thread_id": thread_id}}
+    initial_state = {
+        "employee_id": employee_id,
+        "period": period,
+        "raw_inputs": raw_inputs,
+        "messages": [],
+    }
+
+    result = await graph.ainvoke(initial_state, config=config)
+
+    # 检查是否在 interrupt 处暂停
+    interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
+    if interrupts:
+        interrupt_info = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
+        if isinstance(interrupt_info, str):
+            interrupt_info = {"message": interrupt_info}
+        thread_store[thread_id] = {
+            "thread_id": thread_id,
+            "employee_id": employee_id,
+            "period": period,
+            "status": "awaiting_review",
+            "interrupt_node": interrupt_info.get("node", "unknown"),
+            "interrupt_info": interrupt_info,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return {
+            "thread_id": thread_id,
+            "status": "awaiting_review",
+            "interrupt": interrupt_info,
+        }
+
+    # 未触发 interrupt（错误或直接完成）
+    if result.get("error"):
+        return {
+            "thread_id": thread_id,
+            "status": "error",
+            "error": "评估处理失败，请查看服务端日志",
+        }
+    parsed = result.get("parsed_evaluation")
+    thread_store[thread_id] = {
+        "thread_id": thread_id,
+        "employee_id": employee_id,
+        "period": period,
+        "status": result.get("status", "completed"),
+        "evaluation": parsed,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return {
+        "thread_id": thread_id,
+        "status": result.get("status", "completed"),
+        "evaluation": parsed,
+    }
+
+
+@router.get("/evaluations-interrupt/{thread_id}/state", response_model=Dict[str, Any])
+async def get_interrupt_state(
+    thread_id: str,
+    app_state: AppState = Depends(get_app_state),
+    role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """查询 interrupt 工作流当前状态"""
+    meta = thread_store.get(thread_id)
+    if not meta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="线程不存在")
+
+    graph = _get_or_create_interrupt_graph(app_state)
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        state = await graph.aget_state(config)
+    except Exception:
+        state = None
+
+    return {
+        "thread_id": thread_id,
+        "meta": meta,
+        "next": list(state.next) if state else [],
+        "values": state.values if state else {},
+    }
+
+
+@router.post("/evaluations-interrupt/{thread_id}/resume", response_model=Dict[str, Any])
+async def resume_interrupt(
+    thread_id: str,
+    payload: Dict[str, Any],
+    request: Request,
+    app_state: AppState = Depends(get_app_state),
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    audit_service: AuditService = Depends(get_audit_service),
+    session: AsyncSession = Depends(get_db),
+    role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """
+    恢复 interrupt 工作流，提交审批决策。
+    payload: {"action": "approve"|"reject"|"request_hr_review", "comment": "..."}
+    """
+    from langgraph.types import Command
+
+    meta = thread_store.get(thread_id)
+    if not meta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="线程不存在")
+    if meta.get("status") not in ("awaiting_review", "hr_audit"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"线程状态 {meta.get('status')} 不可恢复",
+        )
+
+    action = payload.get("action")
+    if action not in ("approve", "reject", "request_hr_review"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="action 必须为 approve / reject / request_hr_review",
+        )
+
+    actor_id = get_current_user_id(request)
+    resume_value = {
+        "action": action,
+        "comment": payload.get("comment", ""),
+        "actor_id": actor_id,
+    }
+
+    graph = _get_or_create_interrupt_graph(app_state)
+    config = {"configurable": {"thread_id": thread_id}}
+
+    result = await graph.ainvoke(Command(resume=resume_value), config=config)
+
+    # 恢复后可能再次中断（如 manager_review → hr_audit）
+    interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
+    if interrupts:
+        interrupt_info = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
+        if isinstance(interrupt_info, str):
+            interrupt_info = {"message": interrupt_info}
+        meta["status"] = "awaiting_review"
+        meta["interrupt_node"] = interrupt_info.get("node", "unknown")
+        meta["interrupt_info"] = interrupt_info
+        await audit_service.log(
+            actor_id=actor_id,
+            action=f"interrupt_{action}",
+            employee_id=meta.get("employee_id"),
+            details={"thread_id": thread_id, "next_node": interrupt_info.get("node")},
+            ip_address=get_client_ip(request),
+        )
+        await session.commit()
+        return {
+            "thread_id": thread_id,
+            "status": "awaiting_review",
+            "interrupt": interrupt_info,
+        }
+
+    # 执行完成
+    final_status = result.get("status", "completed")
+    parsed = result.get("parsed_evaluation")
+    meta["status"] = final_status
+    meta["evaluation"] = parsed
+
+    # 持久化评估结果到数据库
+    if parsed and final_status in ("approved", "rejected"):
+        try:
+            await eval_service.create_evaluation(parsed)
+            await audit_service.log(
+                actor_id=actor_id,
+                action=f"interrupt_{action}_finalized",
+                evaluation_id=parsed.get("evaluation_id"),
+                employee_id=meta.get("employee_id"),
+                details={
+                    "thread_id": thread_id,
+                    "final_status": final_status,
+                },
+                ip_address=get_client_ip(request),
+            )
+            await session.commit()
+        except Exception:
+            logger.exception("interrupt 评估结果持久化失败")
+            await session.rollback()
+
+    return {
+        "thread_id": thread_id,
+        "status": final_status,
+        "evaluation": parsed,
+    }

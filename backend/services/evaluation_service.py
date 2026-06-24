@@ -165,6 +165,12 @@ class EvaluationService:
         )
         return result.scalar_one_or_none()
 
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        result = await self.session.execute(
+            select(User).where(User.email == email)
+        )
+        return result.scalar_one_or_none()
+
     async def create_user(self, data: Dict) -> User:
         user = User(
             user_id=data["user_id"],
@@ -172,6 +178,7 @@ class EvaluationService:
             email=data.get("email"),
             role=data.get("role", "employee"),
             department=data.get("department"),
+            password_hash=data.get("password_hash"),
         )
         self.session.add(user)
         await self.session.commit()

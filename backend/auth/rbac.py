@@ -1,14 +1,17 @@
 """
 RBAC（基于角色的访问控制）
-从请求头解析当前用户身份与角色。
-注意：当前为演示模式，身份由前端 header 传递。
-生产环境应替换为 JWT / Session 解析，禁止信任客户端 header。
+优先从 Authorization header 解析 JWT 获取用户身份与角色；
+若开启演示模式（auth_demo_mode=True），可降级为信任 x-user-role / x-user-id header。
 """
 
 import logging
 from enum import Enum
+from typing import Optional, Tuple
 
 from fastapi import Depends, HTTPException, Request, status
+
+from auth.jwt_handler import decode_access_token, extract_bearer_token
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,24 +36,84 @@ def can_access(role: Role, view: str) -> bool:
     return view in VIEW_PERMISSIONS.get(role, [])
 
 
-def get_current_user_role(request: Request) -> Role:
+def _resolve_user(request: Request) -> Tuple[Optional[Role], Optional[str], str]:
     """
-    从请求头解析当前用户角色。
-    生产环境应替换为 JWT / Session 解析。
+    解析当前用户身份。
+    返回 (role, user_id, source)，source 为 "jwt" / "demo" / "anonymous"。
     """
-    role_header = request.headers.get("x-user-role", "")
-    try:
-        return Role(role_header.lower()) if role_header else Role.EMPLOYEE
-    except ValueError:
+    settings = get_settings()
+
+    # 1. 优先解析 JWT
+    auth_header = request.headers.get("authorization")
+    token = extract_bearer_token(auth_header)
+    if token:
+        payload = decode_access_token(token)
+        if payload:
+            try:
+                role = Role(payload.get("role", ""))
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="token 中角色无效",
+                )
+            user_id = payload.get("sub")
+            if not user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="token 缺少用户标识",
+                )
+            return role, user_id, "jwt"
+        # token 存在但无效
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"无效的角色: {role_header}",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="token 无效或已过期",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 2. 演示模式：信任 header
+    if settings.auth_demo_mode:
+        role_header = request.headers.get("x-user-role", "")
+        if role_header:
+            try:
+                role = Role(role_header.lower())
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"无效的角色: {role_header}",
+                )
+        else:
+            # 演示模式下未提供角色，默认为 employee（仅用于本地开发）
+            role = Role.EMPLOYEE
+        user_id = request.headers.get("x-user-id") or "anonymous"
+        return role, user_id, "demo"
+
+    return None, None, "anonymous"
+
+
+def get_current_user_role(request: Request) -> Role:
+    """从请求解析当前用户角色"""
+    role, _, source = _resolve_user(request)
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未认证，请提供有效 token 或开启演示模式",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if source == "demo":
+        logger.debug("使用演示模式 header 鉴权，生产环境应禁用 auth_demo_mode")
+    return role
 
 
 def get_current_user_id(request: Request) -> str:
-    """从请求头解析当前用户 ID。生产环境应从 token 提取。"""
-    return request.headers.get("x-user-id") or "anonymous"
+    """从请求解析当前用户 ID"""
+    _, user_id, source = _resolve_user(request)
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未认证，请提供有效 token 或开启演示模式",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user_id
 
 
 def get_client_ip(request: Request) -> str:
@@ -73,4 +136,3 @@ def require_role(*allowed_roles: Role):
         return role
 
     return checker
-
