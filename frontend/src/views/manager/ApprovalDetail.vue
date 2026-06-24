@@ -2,10 +2,10 @@
   <div class="approval-detail">
     <el-page-header @back="goBack" title="评估审批" />
 
-    <el-card v-if="evaluation" class="detail-card">
+    <el-card v-if="evaluation" v-loading="loading" class="detail-card">
       <template #header>
         <div class="card-header">
-          <span>评估详情</span>
+          <span>评估详情 — {{ evaluation.employee_id }} / {{ evaluation.period }}</span>
           <el-tag :type="statusType">{{ evaluation.status }}</el-tag>
         </div>
       </template>
@@ -47,8 +47,9 @@
           <el-input v-model="comment" type="textarea" :rows="3" placeholder="请输入审批意见" />
         </el-form-item>
         <el-form-item>
-          <el-button type="success" @click="approve">通过</el-button>
-          <el-button type="danger" @click="reject">驳回</el-button>
+          <el-button type="success" :loading="submitting" @click="approve">通过</el-button>
+          <el-button type="danger" :loading="submitting" @click="reject">驳回</el-button>
+          <el-button type="warning" :loading="submitting" @click="requestHrReview">提交 HR 复核</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -58,21 +59,25 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useEvaluationStore } from '@/stores/evaluation'
+import { ElMessage } from 'element-plus'
+import { evaluationApi } from '@/api/client'
 
 const route = useRoute()
 const router = useRouter()
-const evalStore = useEvaluationStore()
 
+const evaluationId = computed(() => route.params.id)
+const loading = ref(false)
+const submitting = ref(false)
+const evaluation = ref(null)
 const comment = ref('')
-const evaluation = computed(() => evalStore.currentEvaluation)
+
 const employeeView = computed(() => evaluation.value?.employee_view || {})
 const managerView = computed(() => evaluation.value?.manager_view || {})
 
 const statusType = computed(() => {
-  const map = { approved: 'success', rejected: 'danger', ai_drafted: 'warning', hr_audit: 'warning' }
+  const map = { approved: 'success', rejected: 'danger', ai_drafted: 'warning', manager_review: 'warning', hr_audit: 'warning' }
   return map[evaluation.value?.status] || 'info'
 })
 
@@ -81,27 +86,72 @@ function riskType(level) {
   return map[level] || 'info'
 }
 
+async function loadEvaluation() {
+  loading.value = true
+  try {
+    const data = await evaluationApi.get(evaluationId.value)
+    evaluation.value = data
+  } catch (err) {
+    console.error('加载评估失败:', err)
+    ElMessage.error('加载评估失败')
+  } finally {
+    loading.value = false
+  }
+}
+
 async function approve() {
-  await evalStore.approveEvaluation(evaluation.value.evaluation_id, {
-    current_status: evaluation.value.status,
-    actor_id: 'M001',
-    comment: comment.value,
-  })
-  router.push('/manager')
+  if (!evaluation.value) return
+  submitting.value = true
+  try {
+    await evaluationApi.approve(evaluationId.value, {
+      comment: comment.value,
+    })
+    ElMessage.success('操作成功')
+    router.push('/manager')
+  } catch (err) {
+    ElMessage.error(err.message)
+  } finally {
+    submitting.value = false
+  }
 }
 
 async function reject() {
-  await evalStore.rejectEvaluation(evaluation.value.evaluation_id, {
-    current_status: evaluation.value.status,
-    actor_id: 'M001',
-    comment: comment.value,
-  })
-  router.push('/manager')
+  if (!evaluation.value) return
+  submitting.value = true
+  try {
+    await evaluationApi.reject(evaluationId.value, {
+      comment: comment.value,
+    })
+    ElMessage.success('操作成功')
+    router.push('/manager')
+  } catch (err) {
+    ElMessage.error(err.message)
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function requestHrReview() {
+  if (!evaluation.value) return
+  submitting.value = true
+  try {
+    await evaluationApi.requestHrReview(evaluationId.value, {
+      comment: comment.value,
+    })
+    ElMessage.success('操作成功')
+    router.push('/manager')
+  } catch (err) {
+    ElMessage.error(err.message)
+  } finally {
+    submitting.value = false
+  }
 }
 
 function goBack() {
   router.push('/manager')
 }
+
+onMounted(loadEvaluation)
 </script>
 
 <style scoped>

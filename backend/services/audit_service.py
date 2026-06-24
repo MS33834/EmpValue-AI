@@ -28,6 +28,7 @@ class AuditService:
         details: Optional[Dict] = None,
         ip_address: Optional[str] = None,
     ) -> AuditLog:
+        """记录审计日志（不 commit，由调用方控制事务）"""
         entry = AuditLog(
             log_id=f"LOG-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}",
             actor_id=actor_id,
@@ -38,7 +39,6 @@ class AuditService:
             ip_address=ip_address,
         )
         self.session.add(entry)
-        await self.session.commit()
         return entry
 
     async def get_logs(

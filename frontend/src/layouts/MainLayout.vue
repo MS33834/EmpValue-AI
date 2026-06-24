@@ -21,7 +21,7 @@
           </el-menu-item>
         </template>
 
-        <template v-if="auth.role === 'manager' || auth.role === 'hr'">
+        <template v-if="auth.role === 'manager' || auth.role === 'hr' || auth.role === 'admin'">
           <el-menu-item index="/manager">
             <el-icon><UserFilled /></el-icon>
             <span>团队诊断</span>

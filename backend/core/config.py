@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     # 模型档位强制设定，可选 auto / L0 / L1 / L2 / L3
     model_tier: Literal["auto", "L0", "L1", "L2", "L3"] = "auto"
 
-    # 云端 API 配置
+    # 通用云端 API 配置（OpenAI 兼容，可用于 DeepSeek / 阿里云百炼 / 硅基流动等）
+    cloud_api_key: Optional[str] = None
+    cloud_base_url: str = "https://api.openai.com/v1"
+    cloud_model: str = "gpt-4o-mini"
+
+    # 兼容旧版 OpenAI 命名（未设置 cloud_* 时兜底使用）
     openai_api_key: Optional[str] = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
@@ -38,6 +43,15 @@ class Settings(BaseSettings):
     local_model_l1: str = "qwen2.5-0.5b-instruct"
     local_model_l2: str = "qwen2.5-7b-instruct"
     local_model_l3: str = "qwen2.5-14b-instruct"
+
+    # Embedding 配置（OpenAI 兼容接口）
+    embedding_api_key: Optional[str] = None
+    embedding_base_url: Optional[str] = None
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+
+    # 向量库配置
+    vector_store_dir: str = "./chroma_db"
 
     # 默认推理参数
     temperature: float = 0.1

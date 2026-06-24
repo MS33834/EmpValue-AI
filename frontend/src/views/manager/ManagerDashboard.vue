@@ -4,17 +4,20 @@
       <el-col :span="24">
         <el-card>
           <template #header>
-            <span>团队价值排行榜</span>
+            <div class="card-header">
+              <span>待审批评估（{{ pendingCount }}）</span>
+              <el-button size="small" @click="loadData">刷新</el-button>
+            </div>
           </template>
-          <el-table :data="teamRankings" style="width: 100%">
-            <el-table-column prop="rank" label="排名" width="80" />
-            <el-table-column prop="name" label="姓名" />
-            <el-table-column prop="score" label="综合得分" sortable />
-            <el-table-column prop="tier" label="档位" />
+          <el-table v-loading="loading" :data="pendingApprovals" style="width: 100%" empty-text="暂无待审批评估">
+            <el-table-column prop="employee_id" label="员工ID" />
+            <el-table-column prop="period" label="周期" />
+            <el-table-column prop="overall_score" label="综合得分" sortable />
+            <el-table-column prop="status" label="状态" />
             <el-table-column label="操作" width="180">
               <template #default="{ row }">
                 <el-button size="small" type="primary" @click="viewDetail(row)">
-                  查看诊断
+                  审批
                 </el-button>
               </template>
             </el-table-column>
@@ -27,9 +30,13 @@
       <el-col :span="12">
         <el-card>
           <template #header>
-            <span>待审批评估</span>
+            <span>最近已审批</span>
           </template>
-          <el-empty description="暂无待审批评估" />
+          <el-table :data="recentApproved" style="width: 100%">
+            <el-table-column prop="employee_id" label="员工ID" />
+            <el-table-column prop="period" label="周期" />
+            <el-table-column prop="overall_score" label="得分" />
+          </el-table>
         </el-card>
       </el-col>
       <el-col :span="12">
@@ -38,9 +45,9 @@
             <span>团队风险分布</span>
           </template>
           <div class="risk-summary">
-            <el-statistic title="高风险" :value="2" value-style="color: #f56c6c" />
-            <el-statistic title="中风险" :value="3" value-style="color: #e6a23c" />
-            <el-statistic title="低风险" :value="8" value-style="color: #67c23a" />
+            <el-statistic title="高风险" :value="riskStats.high" value-style="color: #f56c6c" />
+            <el-statistic title="中风险" :value="riskStats.medium" value-style="color: #e6a23c" />
+            <el-statistic title="低风险" :value="riskStats.low" value-style="color: #67c23a" />
           </div>
         </el-card>
       </el-col>
@@ -49,22 +56,39 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { managerApi } from '@/api/client'
 
 const router = useRouter()
 
-const teamRankings = ref([
-  { rank: 1, name: '张三', score: 92, tier: 'L3' },
-  { rank: 2, name: '李四', score: 85, tier: 'L2' },
-  { rank: 3, name: '王五', score: 78, tier: 'L2' },
-  { rank: 4, name: '赵六', score: 65, tier: 'L1' },
-  { rank: 5, name: '孙七', score: 55, tier: 'L1' },
-])
+const loading = ref(false)
+const pendingCount = ref(0)
+const pendingApprovals = ref([])
+const recentApproved = ref([])
+const riskStats = ref({ high: 0, medium: 0, low: 0 })
+
+async function loadData() {
+  loading.value = true
+  try {
+    const data = await managerApi.dashboard()
+    pendingCount.value = data.pending_count || 0
+    pendingApprovals.value = data.pending || []
+    recentApproved.value = data.recent_approved || []
+  } catch (err) {
+    console.error('加载主管工作台失败:', err)
+    ElMessage.error('加载主管工作台失败')
+  } finally {
+    loading.value = false
+  }
+}
 
 function viewDetail(row) {
-  router.push(`/manager/approval/${row.rank}`)
+  router.push(`/manager/approval/${row.evaluation_id}`)
 }
+
+onMounted(loadData)
 </script>
 
 <style scoped>
@@ -75,5 +99,10 @@ function viewDetail(row) {
   display: flex;
   justify-content: space-around;
   padding: 20px 0;
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 </style>

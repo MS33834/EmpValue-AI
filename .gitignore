@@ -29,5 +29,7 @@ npm-debug.log*
 
 # Local databases
 *.db
+*.db-shm
+*.db-wal
 chroma_db/
 

@@ -3,11 +3,14 @@ Langfuse 可观测性集成
 追踪 Agent 执行全链路：输入、Prompt、模型调用、输出、审批状态。
 """
 
+import logging
 import os
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
 from core.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class NoOpTrace:
@@ -32,7 +35,7 @@ class NoOpTrace:
 class LangfuseTracer:
     """Langfuse 追踪器包装"""
 
-    def __init__(self, settings: Settings = None):
+    def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
         self._client = None
         self._enabled = bool(
@@ -50,7 +53,7 @@ class LangfuseTracer:
                     host=self.settings.langfuse_host,
                 )
             except Exception as e:
-                print(f"Langfuse 初始化失败: {e}")
+                logger.warning(f"Langfuse 初始化失败: {e}")
                 self._enabled = False
 
     def is_enabled(self) -> bool:

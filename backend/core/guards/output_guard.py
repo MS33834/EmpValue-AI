@@ -4,7 +4,7 @@
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -110,14 +110,23 @@ class OutputGuard:
     def sanitize_manager_view(self, manager_view: Dict) -> OutputGuardResult:
         """对管理视图进行 PII 脱敏（允许尖锐判断，但脱敏敏感信息）"""
         redacted_all = []
-        text = str(manager_view)
-        cleaned, redacted = self.redact_pii(text)
-        redacted_all.extend(redacted)
 
-        # 反序列化（简化处理，实际应递归处理每个字段）
-        # 这里仅返回脱敏后的文本表示，实际生产环境应递归处理 dict
+        def _redact_recursive(obj):
+            """递归遍历 dict/list，对每个字符串字段脱敏"""
+            if isinstance(obj, str):
+                cleaned, r = self.redact_pii(obj)
+                redacted_all.extend(r)
+                return cleaned
+            elif isinstance(obj, dict):
+                return {k: _redact_recursive(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [_redact_recursive(item) for item in obj]
+            return obj
+
+        cleaned_view = _redact_recursive(manager_view)
+
         return OutputGuardResult(
-            clean_text=cleaned,
+            clean_text=str(cleaned_view),
             violations=[],
             redacted_entities=redacted_all,
         )

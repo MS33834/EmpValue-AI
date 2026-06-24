@@ -3,8 +3,8 @@
 """
 
 import re
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -13,11 +13,7 @@ class GuardResult:
 
     allowed: bool
     reason: str = ""
-    triggered_rules: List[str] = None
-
-    def __post_init__(self):
-        if self.triggered_rules is None:
-            self.triggered_rules = []
+    triggered_rules: List[str] = field(default_factory=list)
 
 
 class InputGuard:
@@ -47,7 +43,7 @@ class InputGuard:
     MAX_INPUT_LENGTH = 10000
     MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024  # 10MB
 
-    def __init__(self, max_input_length: int = None):
+    def __init__(self, max_input_length: Optional[int] = None):
         self.max_input_length = max_input_length or self.MAX_INPUT_LENGTH
 
     def check(self, raw_inputs: List[Dict]) -> GuardResult:

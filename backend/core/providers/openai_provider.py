@@ -3,11 +3,14 @@ OpenAI 兼容 Provider
 同时支持：OpenAI 官方、Azure、LM Studio、Ollama、DeepSeek、阿里云百炼等。
 """
 
+import logging
 from typing import Dict, List, Optional
 
 from openai import AsyncOpenAI
 
 from .base import BaseProvider, ChatCompletion, ChatMessage, ProviderConfig
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleProvider(BaseProvider):
@@ -57,11 +60,11 @@ class OpenAICompatibleProvider(BaseProvider):
 
     async def health_check(self) -> bool:
         try:
-            # LM Studio / Ollama 可用模型列表接口与 OpenAI 兼容
             models = await self.client.models.list()
             model_ids = [m.id for m in models.data]
-            return self.config.model_name in model_ids or len(model_ids) > 0
-        except Exception:
+            return self.config.model_name in model_ids
+        except Exception as e:
+            logger.debug(f"健康检查失败: {e}")
             return False
 
     @staticmethod

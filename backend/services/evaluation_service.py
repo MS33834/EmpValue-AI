@@ -82,6 +82,7 @@ class EvaluationService:
         new_status: str,
         approver_id: Optional[str] = None,
     ) -> Optional[Evaluation]:
+        """更新评估状态（不 commit，由调用方控制事务）"""
         evaluation = await self.get_evaluation(evaluation_id)
         if not evaluation:
             return None
@@ -90,8 +91,6 @@ class EvaluationService:
             evaluation.approver_id = approver_id
         if new_status == "approved":
             evaluation.approved_at = datetime.now(timezone.utc)
-        await self.session.commit()
-        await self.session.refresh(evaluation)
         return evaluation
 
     async def update_evaluation(
@@ -99,7 +98,7 @@ class EvaluationService:
         evaluation_id: str,
         evaluation_data: Dict,
     ) -> Optional[Evaluation]:
-        """完整更新评估内容（用于重新评估）"""
+        """完整更新评估内容（不 commit，由调用方控制事务）"""
         evaluation = await self.get_evaluation(evaluation_id)
         if not evaluation:
             return None
@@ -110,8 +109,6 @@ class EvaluationService:
         evaluation.status = evaluation_data.get("status", evaluation.status)
         if evaluation.status == "approved":
             evaluation.approved_at = datetime.now(timezone.utc)
-        await self.session.commit()
-        await self.session.refresh(evaluation)
         return evaluation
 
     async def list_evaluations(

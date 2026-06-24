@@ -5,6 +5,7 @@
 
 from typing import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -14,11 +15,23 @@ settings = get_settings()
 
 DATABASE_URL = settings.database_url
 
+_is_sqlite = DATABASE_URL.startswith("sqlite")
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=settings.debug,
     future=True,
+    connect_args={"check_same_thread": False} if _is_sqlite else {},
 )
+
+# SQLite 启用 WAL 模式提升并发写入
+if _is_sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
@@ -49,3 +62,4 @@ async def init_db() -> None:
 async def close_db() -> None:
     """关闭数据库连接"""
     await engine.dispose()
+

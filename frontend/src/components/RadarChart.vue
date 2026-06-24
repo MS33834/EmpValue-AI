@@ -1,5 +1,6 @@
 <template>
-  <v-chart class="radar-chart" :option="option" autoresize />
+  <v-chart v-if="hasData" class="radar-chart" :option="option" autoresize />
+  <el-empty v-else description="暂无维度数据" />
 </template>
 
 <script setup>
@@ -7,10 +8,10 @@ import { computed } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { RadarChart } from 'echarts/charts'
-import { TitleComponent, TooltipComponent, LegendComponent, RadarComponent } from 'echarts/components'
+import { TitleComponent, TooltipComponent, RadarComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
-use([RadarChart, TitleComponent, TooltipComponent, LegendComponent, RadarComponent, CanvasRenderer])
+use([RadarChart, TitleComponent, TooltipComponent, RadarComponent, CanvasRenderer])
 
 const props = defineProps({
   dimensions: {
@@ -21,6 +22,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+})
+
+const hasData = computed(() => {
+  return props.dimensions.length > 0 && props.dimensions.length === props.scores.length
 })
 
 const option = computed(() => ({

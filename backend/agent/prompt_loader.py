@@ -35,10 +35,9 @@ class PromptLoader:
         """从 Prompt 文件头提取版本号"""
         text = self.load(name)
         for line in text.splitlines()[:10]:
-            if "版本" in line and "v" in line:
-                match = re.search(r"v\d+\.\d+", line)
-                if match:
-                    return match.group(0)
+            match = re.search(r"版本[:：*\s]*\s*(v\d+\.\d+)", line)
+            if match:
+                return match.group(1)
         return "unknown"
 
     def render(

@@ -7,10 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.graph import create_evaluation_graph
 from agent.prompt_loader import PromptLoader
-from agent.tools import AgentToolkit, DBCompanyKB, DBMemoryStore
+from agent.tools import AgentToolkit
 from core.config import Settings, get_settings
 from core.database import get_db
 from core.model_router import ModelRouter
+from memory.vector_store import ChromaCompanyKB, ChromaMemoryStore
 from services.approval_service import ApprovalService
 from services.audit_service import AuditService
 from services.evaluation_service import EvaluationService
@@ -23,12 +24,14 @@ class AppState:
         self.settings = settings
         self.model_router = ModelRouter(settings)
         self.prompt_loader = PromptLoader()
+        self.memory_store = ChromaMemoryStore(settings=settings)
+        self.company_kb = ChromaCompanyKB(settings=settings)
 
     def get_graph(self, eval_service: EvaluationService):
         """创建并返回一个与当前数据库会话绑定的 LangGraph 实例"""
         toolkit = AgentToolkit(
-            memory=DBMemoryStore(eval_service),
-            kb=DBCompanyKB(eval_service),
+            memory=self.memory_store,
+            kb=self.company_kb,
         )
         return create_evaluation_graph(
             toolkit=toolkit,

@@ -5,7 +5,7 @@ LangGraph 评估工作流
 import json
 import time
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError

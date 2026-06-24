@@ -1,8 +1,10 @@
 """
 审批流服务
 管理评估状态机的合法转换与审批记录，持久化到数据库。
+注意：transition 不在内部 commit，由调用方控制事务边界以保证原子性。
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import List, Literal, Optional
 
@@ -39,13 +41,13 @@ class ApprovalService:
         actor_role: str,
         comment: Optional[str] = None,
     ) -> str:
-        """执行状态转换，写入数据库，返回新状态"""
+        """执行状态转换，写入审批记录（不 commit，由调用方控制事务），返回新状态"""
         if not self.can_transition(current_status, action):
             raise ValueError(f"非法状态转换: {current_status} -> {action}")
 
         new_status = self.VALID_TRANSITIONS[current_status][action]
         action_record = ApprovalAction(
-            action_id=f"ACT-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{actor_id}",
+            action_id=f"ACT-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{actor_id}-{uuid.uuid4().hex[:6]}",
             evaluation_id=evaluation_id,
             actor_id=actor_id,
             actor_role=actor_role,
@@ -53,7 +55,6 @@ class ApprovalService:
             comment=comment,
         )
         self.session.add(action_record)
-        await self.session.commit()
         return new_status
 
     async def get_history(self, evaluation_id: str) -> List[ApprovalAction]:
@@ -67,3 +68,4 @@ class ApprovalService:
     @staticmethod
     def get_allowed_actions(current_status: str) -> List[str]:
         return list(ApprovalService.VALID_TRANSITIONS.get(current_status, {}).keys())
+

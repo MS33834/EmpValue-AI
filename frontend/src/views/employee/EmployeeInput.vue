@@ -29,7 +29,7 @@
         </el-form-item>
 
         <el-form-item>
-          <el-button type="primary" :loading="evalStore.loading" @click="submit">
+          <el-button type="primary" :loading="evalStore.loading || polling" @click="submit">
             提交并生成评估
           </el-button>
         </el-form-item>
@@ -50,12 +50,14 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { reactive, ref, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { useEvaluationStore } from '@/stores/evaluation'
+import { useEvaluationStore, cancelPolling } from '@/stores/evaluation'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const evalStore = useEvaluationStore()
+const auth = useAuthStore()
 
 const form = reactive({
   period: '2026-W25',
@@ -67,14 +69,15 @@ const resultVisible = ref(false)
 const resultIcon = ref('success')
 const resultTitle = ref('')
 const resultSubtitle = ref('')
+const polling = ref(false)
 
 async function submit() {
   const rawInputs = [
-    { input_id: `daily-${Date.now()}`, type: 'daily_report', content: form.content, attachments: [] },
+    { input_id: `daily-${crypto.randomUUID()}`, type: 'daily_report', content: form.content, attachments: [] },
   ]
   if (form.tasks.trim()) {
     rawInputs.push({
-      input_id: `task-${Date.now()}`,
+      input_id: `task-${crypto.randomUUID()}`,
       type: 'task_progress',
       content: form.tasks,
       attachments: [],
@@ -82,24 +85,45 @@ async function submit() {
   }
 
   try {
-    await evalStore.createEvaluation({
-      employee_id: 'E1001',
+    resultVisible.value = true
+    resultIcon.value = 'info'
+    resultTitle.value = '评估任务已提交'
+    resultSubtitle.value = '正在后台生成，请稍候...'
+    polling.value = true
+
+    const { job_id } = await evalStore.createEvaluation({
+      employee_id: auth.userId || 'E1001',
       period: form.period,
       raw_inputs: rawInputs,
     })
+
+    const job = await evalStore.pollJob(job_id, (job) => {
+      if (job.status === 'pending') {
+        resultSubtitle.value = 'AI 正在处理中，请稍候...'
+      }
+    })
+
+    if (job.status === 'failed') {
+      throw new Error(job.error || '评估任务失败')
+    }
+
     resultIcon.value = 'success'
     resultTitle.value = '评估已生成'
-    resultSubtitle.value = `状态：${evalStore.currentEvaluation.status}，综合得分：${evalStore.currentEvaluation.overall_score}`
+    resultSubtitle.value = `状态：${evalStore.currentEvaluation?.status}，综合得分：${evalStore.currentEvaluation?.overall_score}`
   } catch (err) {
     resultIcon.value = 'error'
     resultTitle.value = '生成失败'
     resultSubtitle.value = err.message
   } finally {
-    resultVisible.value = true
+    polling.value = false
   }
 }
 
 function goDashboard() {
   router.push('/employee')
 }
+
+onBeforeUnmount(() => {
+  cancelPolling()
+})
 </script>

@@ -29,7 +29,7 @@ const routes = [
     path: '/manager',
     name: 'ManagerLayout',
     component: () => import('@/layouts/MainLayout.vue'),
-    meta: { role: 'manager' },
+    meta: { role: ['manager', 'hr', 'admin'] },
     children: [
       {
         path: '',
@@ -47,6 +47,10 @@ const routes = [
     path: '/',
     redirect: '/login',
   },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/login',
+  },
 ]
 
 const router = createRouter({
@@ -61,6 +65,11 @@ router.beforeEach((to, from, next) => {
     return
   }
   if (!auth.isLoggedIn) {
+    next('/login')
+    return
+  }
+  const requiredRole = to.meta.role || to.matched.find((r) => r.meta.role)?.meta.role
+  if (requiredRole && !requiredRole.includes(auth.role)) {
     next('/login')
     return
   }

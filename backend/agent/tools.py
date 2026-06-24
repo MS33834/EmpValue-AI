@@ -66,7 +66,7 @@ class DummyMemoryStore(MemoryStore):
 class DummyCompanyKB(CompanyKB):
     """内存版公司知识库，用于测试"""
 
-    def __init__(self, documents: List[Dict[str, Any]] = None):
+    def __init__(self, documents: Optional[List[Dict[str, Any]]] = None):
         self._documents = documents or []
 
     async def query(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
@@ -80,34 +80,6 @@ class DummyCompanyKB(CompanyKB):
                 scored.append((score, doc))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [doc for _, doc in scored[:top_k]]
-
-
-class DBMemoryStore(MemoryStore):
-    """基于数据库的 MemoryStore 实现"""
-
-    def __init__(self, eval_service):
-        self.eval_service = eval_service
-
-    async def get_employee_history(
-        self,
-        employee_id: str,
-        period: Optional[str] = None,
-        limit: int = 10,
-    ) -> List[Dict[str, Any]]:
-        return await self.eval_service.get_employee_history(employee_id, period, limit)
-
-    async def add_memory(self, employee_id: str, memory: Dict[str, Any]) -> None:
-        await self.eval_service.add_memory(employee_id, memory)
-
-
-class DBCompanyKB(CompanyKB):
-    """基于数据库的 CompanyKB 实现"""
-
-    def __init__(self, eval_service):
-        self.eval_service = eval_service
-
-    async def query(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        return await self.eval_service.query_company_kb(query, top_k)
 
 
 class AgentToolkit:

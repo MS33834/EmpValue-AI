@@ -45,7 +45,7 @@ class ModelRouter:
         return {
             "L0": TierInfo(
                 tier="L0",
-                model_name=self.settings.openai_model,
+                model_name=self.settings.cloud_model or self.settings.openai_model,
                 provider_type="cloud",
                 description="云端大模型，最强推理能力",
             ),
@@ -76,7 +76,7 @@ class ModelRouter:
         }
 
     @staticmethod
-    def _detect_hardware() -> Dict[str, any]:
+    def _detect_hardware() -> Dict[str, Any]:
         """探测硬件资源"""
         result = {"vram_gb": 0.0, "ram_gb": 0.0, "gpu_count": 0, "gpu_names": []}
 
@@ -98,7 +98,8 @@ class ModelRouter:
                     props = torch.cuda.get_device_properties(i)
                     result["vram_gb"] += props.total_memory / (1024**3)
                     result["gpu_names"].append(props.name)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"torch 不可用，尝试 nvidia-smi: {e}")
             #  fallback：尝试 nvidia-smi
             try:
                 output = subprocess.check_output(
@@ -144,15 +145,17 @@ class ModelRouter:
         tier_info = self._tier_map[selected_tier]
 
         if tier_info.provider_type == "cloud":
-            if not self.settings.openai_api_key:
+            api_key = self.settings.cloud_api_key or self.settings.openai_api_key
+            base_url = self.settings.cloud_base_url or self.settings.openai_base_url
+            if not api_key:
                 logger.warning(
-                    f"档位 {selected_tier} 为云端模型，但 OPENAI_API_KEY 未配置，"
+                    f"档位 {selected_tier} 为云端模型，但 cloud_api_key/openai_api_key 未配置，"
                     "调用将失败或回退到本地模型"
                 )
             config = ProviderConfig(
                 model_name=tier_info.model_name,
-                base_url=self.settings.openai_base_url,
-                api_key=self.settings.openai_api_key,
+                base_url=base_url,
+                api_key=api_key,
                 temperature=self.settings.temperature,
                 max_tokens=self.settings.max_tokens,
             )
@@ -196,7 +199,7 @@ class ModelRouter:
         logger.error(f"所有档位均不可用，返回首选档位: {preferred_tier}, 最后错误: {last_error}")
         return self.get_provider(preferred_tier), preferred_tier
 
-    def hardware_report(self) -> Dict[str, any]:
+    def hardware_report(self) -> Dict[str, Any]:
         """返回硬件探测报告"""
         return {
             **self._hardware,

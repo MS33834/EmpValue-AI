@@ -2,12 +2,15 @@
   <div class="employee-dashboard">
     <el-row :gutter="20">
       <el-col :span="16">
-        <el-card>
+        <el-card v-loading="loading">
           <template #header>
-            <span>我的成长看板</span>
+            <div class="card-header">
+              <span>我的成长看板</span>
+              <span v-if="latestEvaluation">{{ latestEvaluation.period }} · 得分 {{ latestEvaluation.overall_score }}</span>
+            </div>
           </template>
-          <div v-if="evalStore.currentEvaluation">
-            <h3>{{ evalStore.currentEvaluation.period }} 评估总结</h3>
+          <div v-if="latestEvaluation">
+            <h3>评估总结</h3>
             <p class="summary">{{ employeeView.summary }}</p>
 
             <h4>优势</h4>
@@ -23,8 +26,8 @@
                 type="primary"
               >
                 <strong>{{ area.dimension }}</strong> — {{ area.score }} 分
-                <div class="evidence">依据：{{ area.evidence.join('；') }}</div>
-                <div class="action">建议：{{ area.improvement_actions.join('；') }}</div>
+                <div class="evidence">依据：{{ (area.evidence || []).join('；') }}</div>
+                <div class="action">建议：{{ (area.improvement_actions || []).join('；') }}</div>
               </el-timeline-item>
             </el-timeline>
 
@@ -33,7 +36,7 @@
               {{ focus }}
             </el-tag>
           </div>
-          <el-empty v-else description="暂无评估数据，请先录入日报" />
+          <el-empty v-else description="暂无已审批的评估数据" />
         </el-card>
       </el-col>
 
@@ -43,9 +46,11 @@
             <span>能力雷达图</span>
           </template>
           <RadarChart
+            v-if="radarDimensions.length"
             :dimensions="radarDimensions"
             :scores="radarScores"
           />
+          <el-empty v-else description="暂无维度数据" />
         </el-card>
       </el-col>
     </el-row>
@@ -53,15 +58,18 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useEvaluationStore } from '@/stores/evaluation'
+import { computed, ref, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
+import { employeeApi } from '@/api/client'
 import RadarChart from '@/components/RadarChart.vue'
 
-const evalStore = useEvaluationStore()
+const auth = useAuthStore()
+const loading = ref(false)
+const evaluations = ref([])
 
-const employeeView = computed(() => {
-  return evalStore.currentEvaluation?.employee_view || {}
-})
+const latestEvaluation = computed(() => evaluations.value[0] || null)
+const employeeView = computed(() => latestEvaluation.value?.employee_view || {})
 
 const radarDimensions = computed(() => {
   return (employeeView.value.growth_areas || []).map((a) => a.dimension)
@@ -70,6 +78,21 @@ const radarDimensions = computed(() => {
 const radarScores = computed(() => {
   return (employeeView.value.growth_areas || []).map((a) => a.score)
 })
+
+async function loadData() {
+  loading.value = true
+  try {
+    const data = await employeeApi.dashboard(auth.userId)
+    evaluations.value = data.evaluations || []
+  } catch (err) {
+    console.error('加载员工看板失败:', err)
+    ElMessage.error('加载员工看板失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadData)
 </script>
 
 <style scoped>
@@ -93,5 +116,10 @@ const radarScores = computed(() => {
 .focus-tag {
   margin-right: 8px;
   margin-bottom: 8px;
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 </style>
