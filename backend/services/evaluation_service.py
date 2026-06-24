@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import CompanyKB, Evaluation, Feedback, Memory, RawInput, User
+from models import CompanyKB, DimensionScore, Evaluation, EvidenceRef, Feedback, Memory, RawInput, User
 
 
 class EvaluationService:
@@ -54,7 +54,7 @@ class EvaluationService:
         return result.scalars().all()
 
     async def create_evaluation(self, evaluation_data: Dict) -> Evaluation:
-        """保存评估结果"""
+        """保存评估结果，并同步拆分维度得分与证据引用"""
         evaluation = Evaluation(
             evaluation_id=evaluation_data["evaluation_id"],
             employee_id=evaluation_data["employee_id"],
@@ -66,6 +66,26 @@ class EvaluationService:
             status=evaluation_data.get("status", "ai_drafted"),
         )
         self.session.add(evaluation)
+
+        # 同步拆分维度得分与证据引用，便于横向分析
+        growth_areas = evaluation_data.get("employee_view", {}).get("growth_areas", [])
+        for area in growth_areas:
+            dim = DimensionScore(
+                evaluation_id=evaluation.evaluation_id,
+                employee_id=evaluation_data["employee_id"],
+                period=evaluation_data["period"],
+                dimension=area.get("dimension", ""),
+                score=area.get("score", 0),
+            )
+            self.session.add(dim)
+            for evidence in area.get("evidence", []):
+                ref = EvidenceRef(
+                    evaluation_id=evaluation.evaluation_id,
+                    dimension=area.get("dimension", ""),
+                    evidence_text=evidence,
+                )
+                self.session.add(ref)
+
         await self.session.commit()
         await self.session.refresh(evaluation)
         return evaluation

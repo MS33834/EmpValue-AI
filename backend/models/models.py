@@ -143,3 +143,48 @@ class CompanyKB(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class EvaluationPeriod(Base):
+    """评估周期定义（周/月/季/年）"""
+
+    __tablename__ = "evaluation_periods"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    period: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    period_type: Mapped[str] = mapped_column(String(16), nullable=False, default="weekly")
+    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class DimensionScore(Base):
+    """维度得分明细（从 evaluation.employee_view.growth_areas 拆出，便于横向分析）"""
+
+    __tablename__ = "dimension_scores"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    evaluation_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("evaluations.evaluation_id"), index=True, nullable=False
+    )
+    employee_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    period: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    dimension: Mapped[str] = mapped_column(String(64), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class EvidenceRef(Base):
+    """证据引用关联（维度得分 → 原始输入片段）"""
+
+    __tablename__ = "evidence_refs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    evaluation_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("evaluations.evaluation_id"), index=True, nullable=False
+    )
+    dimension: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_id: Mapped[str] = mapped_column(String(128), index=True, nullable=True)
+    evidence_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

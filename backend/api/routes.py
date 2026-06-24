@@ -856,6 +856,26 @@ async def get_team_analytics(
     return {"team_id": team_id, **analytics}
 
 
+@router.get("/teams/{team_id}/analytics")
+async def get_team_analytics_get(
+    team_id: str,
+    members: str,
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """团队分析（GET 版本，members 以逗号分隔）
+    示例：/teams/team-1/analytics?members=E1001,E1002
+    """
+    member_list = [m.strip() for m in members.split(",") if m.strip()]
+    if not member_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="members 参数必填",
+        )
+    analytics = await eval_service.get_team_analytics(member_list)
+    return {"team_id": team_id, **analytics}
+
+
 @router.get("/admin/model-status")
 async def get_model_status(
     app_state: AppState = Depends(get_app_state),
@@ -881,3 +901,26 @@ async def switch_model_tier(
         )
     app_state.settings.model_tier = tier
     return {"tier": tier, "recommended": app_state.model_router.get_recommended_tier()}
+
+
+@router.get("/admin/audit-logs")
+async def get_admin_audit_logs(
+    request: Request,
+    actor_id: Optional[str] = None,
+    action: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    audit_service: AuditService = Depends(get_audit_service),
+    role: Role = Depends(require_role(Role.ADMIN)),
+):
+    """管理端审计日志查询，支持按操作人、动作筛选与分页"""
+    if page < 1:
+        page = 1
+    if page_size < 1 or page_size > 200:
+        page_size = 20
+    return await audit_service.list_logs(
+        actor_id=actor_id,
+        action=action,
+        page=page,
+        page_size=page_size,
+    )

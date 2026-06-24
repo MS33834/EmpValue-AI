@@ -54,6 +54,7 @@ export const evaluationApi = {
 export const managerApi = {
   pendingApprovals: () => api.get('/manager/pending-approvals'),
   dashboard: () => api.get('/manager/dashboard'),
+  teamAnalytics: (members) => api.post('/teams/team-1/analytics', { members }),
 }
 
 export const hrApi = {
@@ -72,5 +73,6 @@ export const inputApi = {
 
 export const adminApi = {
   modelStatus: () => api.get('/admin/model-status'),
-  switchModel: (payload) => api.post('/admin/model-switch', payload),
+  switchModel: (tier) => api.post('/admin/model-switch', { tier }),
+  auditLogs: (params) => api.get('/admin/audit-logs', { params }),
 }

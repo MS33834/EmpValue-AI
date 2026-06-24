@@ -1,0 +1,45 @@
+services:
+  backend:
+    build: ./backend
+    container_name: empvalue-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # 容器内持久化路径，覆盖默认的 ./empvalue_ai.db
+      - DATABASE_URL=sqlite+aiosqlite:///./dbdata/empvalue_ai.db
+      - VECTOR_STORE_DIR=/app/chroma_db
+    volumes:
+      # 挂载 data 目录（profiles / sample 等可定制数据）
+      - ./backend/data:/app/data
+      # 持久化向量库
+      - empvalue_chroma_data:/app/chroma_db
+      # 持久化 SQLite 数据库
+      - empvalue_db_data:/app/dbdata
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: empvalue-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: empvalue-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - empvalue_redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  empvalue_chroma_data:
+  empvalue_db_data:
+  empvalue_redis_data:

@@ -6,7 +6,10 @@ from models.models import (
     ApprovalAction,
     AuditLog,
     CompanyKB,
+    DimensionScore,
     Evaluation,
+    EvaluationPeriod,
+    EvidenceRef,
     Feedback,
     Memory,
     RawInput,
@@ -22,4 +25,7 @@ __all__ = [
     "Feedback",
     "Memory",
     "CompanyKB",
+    "EvaluationPeriod",
+    "DimensionScore",
+    "EvidenceRef",
 ]

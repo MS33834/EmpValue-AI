@@ -37,11 +37,13 @@ const selectedRole = ref('employee')
 
 function handleLogin() {
   auth.login(selectedRole.value)
-  if (selectedRole.value === 'employee') {
-    router.push('/employee')
-  } else {
-    router.push('/manager')
+  const redirectMap = {
+    employee: '/employee',
+    manager: '/manager',
+    hr: '/hr',
+    admin: '/admin',
   }
+  router.push(redirectMap[selectedRole.value] || '/employee')
 }
 </script>
 

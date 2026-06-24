@@ -19,12 +19,42 @@
             <el-icon><Document /></el-icon>
             <span>录入日报</span>
           </el-menu-item>
+          <el-menu-item index="/employee/history">
+            <el-icon><Timer /></el-icon>
+            <span>历史评估</span>
+          </el-menu-item>
+          <el-menu-item index="/employee/feedback">
+            <el-icon><ChatDotRound /></el-icon>
+            <span>反馈申诉</span>
+          </el-menu-item>
+        </template>
+
+        <template v-if="auth.role === 'hr'">
+          <el-menu-item index="/hr">
+            <el-icon><View /></el-icon>
+            <span>HR复核</span>
+          </el-menu-item>
         </template>
 
         <template v-if="auth.role === 'manager' || auth.role === 'hr' || auth.role === 'admin'">
           <el-menu-item index="/manager">
             <el-icon><UserFilled /></el-icon>
             <span>团队诊断</span>
+          </el-menu-item>
+          <el-menu-item index="/manager/team">
+            <el-icon><DataAnalysis /></el-icon>
+            <span>团队分析</span>
+          </el-menu-item>
+        </template>
+
+        <template v-if="auth.role === 'admin'">
+          <el-menu-item index="/admin">
+            <el-icon><Setting /></el-icon>
+            <span>模型管理</span>
+          </el-menu-item>
+          <el-menu-item index="/admin/audit-logs">
+            <el-icon><Tickets /></el-icon>
+            <span>审计日志</span>
           </el-menu-item>
         </template>
 

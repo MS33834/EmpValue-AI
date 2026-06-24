@@ -23,6 +23,18 @@ const routes = [
         name: 'EmployeeInput',
         component: () => import('@/views/employee/EmployeeInput.vue'),
       },
+      {
+        path: 'history',
+        name: 'EmployeeHistory',
+        component: () => import('@/views/employee/EmployeeHistory.vue'),
+        meta: { title: '历史评估' },
+      },
+      {
+        path: 'feedback',
+        name: 'EmployeeFeedback',
+        component: () => import('@/views/employee/EmployeeFeedback.vue'),
+        meta: { title: '反馈申诉' },
+      },
     ],
   },
   {
@@ -40,6 +52,46 @@ const routes = [
         path: 'approval/:id',
         name: 'ApprovalDetail',
         component: () => import('@/views/manager/ApprovalDetail.vue'),
+      },
+      {
+        path: 'team',
+        name: 'TeamAnalytics',
+        component: () => import('@/views/manager/TeamAnalytics.vue'),
+        meta: { title: '团队分析' },
+      },
+    ],
+  },
+  {
+    path: '/hr',
+    name: 'HRLayout',
+    component: () => import('@/layouts/MainLayout.vue'),
+    meta: { role: ['hr'] },
+    children: [
+      {
+        path: '',
+        name: 'HRDashboard',
+        component: () => import('@/views/hr/HRDashboard.vue'),
+        meta: { title: 'HR复核' },
+      },
+    ],
+  },
+  {
+    path: '/admin',
+    name: 'AdminLayout',
+    component: () => import('@/layouts/MainLayout.vue'),
+    meta: { role: ['admin'] },
+    children: [
+      {
+        path: '',
+        name: 'AdminModel',
+        component: () => import('@/views/admin/AdminModel.vue'),
+        meta: { title: '模型管理' },
+      },
+      {
+        path: 'audit-logs',
+        name: 'AdminAuditLogs',
+        component: () => import('@/views/admin/AdminAuditLogs.vue'),
+        meta: { title: '审计日志' },
       },
     ],
   },
