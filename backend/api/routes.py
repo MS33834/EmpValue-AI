@@ -129,6 +129,7 @@ async def create_input(
     request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
     audit_service: AuditService = Depends(get_audit_service),
+    session: AsyncSession = Depends(get_db),
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """提交员工日报/任务进度等原始输入"""
@@ -155,12 +156,13 @@ async def create_input(
     )
 
     await audit_service.log(
-        actor_id=employee_id,
+        actor_id=get_current_user_id(request),
         action="create_input",
         employee_id=employee_id,
         details={"input_id": input_id, "period": period, "type": raw.type},
         ip_address=get_client_ip(request),
     )
+    await session.commit()
 
     return {
         "input_id": raw.input_id,
@@ -169,6 +171,31 @@ async def create_input(
         "type": raw.type,
         "content": raw.content,
         "created_at": raw.created_at.isoformat(),
+    }
+
+
+@router.get("/inputs", response_model=Dict[str, Any])
+async def list_inputs(
+    employee_id: Optional[str] = None,
+    period: Optional[str] = None,
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """查询原始输入列表"""
+    inputs = await eval_service.list_raw_inputs(employee_id=employee_id, period=period)
+    return {
+        "inputs": [
+            {
+                "input_id": i.input_id,
+                "employee_id": i.employee_id,
+                "period": i.period,
+                "type": i.type,
+                "content": i.content,
+                "created_at": i.created_at.isoformat(),
+            }
+            for i in inputs
+        ],
+        "count": len(inputs),
     }
 
 
@@ -455,6 +482,7 @@ async def create_feedback(
     request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
     audit_service: AuditService = Depends(get_audit_service),
+    session: AsyncSession = Depends(get_db),
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """员工反馈/申诉"""
@@ -495,6 +523,7 @@ async def create_feedback(
         details={"feedback_id": feedback_id, "type": feedback_type},
         ip_address=get_client_ip(request),
     )
+    await session.commit()
 
     return {
         "feedback_id": feedback.feedback_id,
@@ -710,6 +739,7 @@ async def re_evaluate(
     app_state: AppState = Depends(get_app_state),
     eval_service: EvaluationService = Depends(get_evaluation_service),
     audit_service: AuditService = Depends(get_audit_service),
+    session: AsyncSession = Depends(get_db),
     role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """基于反馈或申诉重新运行评估，生成新的 AI 草稿"""
@@ -760,7 +790,7 @@ async def re_evaluate(
     new_eval["evaluation_id"] = evaluation_id
     await eval_service.update_evaluation(evaluation_id=evaluation_id, evaluation_data=new_eval)
     await audit_service.log(
-        actor_id=payload.get("actor_id", "system"),
+        actor_id=get_current_user_id(request),
         action="re_evaluate",
         evaluation_id=evaluation_id,
         details={
@@ -770,6 +800,7 @@ async def re_evaluate(
         },
         ip_address=get_client_ip(request),
     )
+    await session.commit()
 
     return {"evaluation_id": evaluation_id, "status": new_eval["status"], "feedback_processed": len(feedback_items)}
 
@@ -801,6 +832,18 @@ async def get_employee_dashboard(
             else None
         ),
         "history_count": len(evaluations),
+        "evaluations": [
+            {
+                "evaluation_id": e.evaluation_id,
+                "period": e.period,
+                "overall_score": e.overall_score,
+                "status": e.status,
+                "employee_view": e.employee_view,
+                "manager_view": e.manager_view,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in evaluations
+        ],
     }
 
 

@@ -111,22 +111,24 @@ class OutputGuard:
         """对管理视图进行 PII 脱敏（允许尖锐判断，但脱敏敏感信息）"""
         redacted_all = []
 
-        def _redact_recursive(obj):
-            """递归遍历 dict/list，对每个字符串字段脱敏"""
+        def _redact_inplace(obj):
+            """递归遍历 dict/list，对每个字符串字段 in-place 脱敏"""
             if isinstance(obj, str):
                 cleaned, r = self.redact_pii(obj)
                 redacted_all.extend(r)
                 return cleaned
             elif isinstance(obj, dict):
-                return {k: _redact_recursive(v) for k, v in obj.items()}
+                for k, v in obj.items():
+                    obj[k] = _redact_inplace(v)
             elif isinstance(obj, list):
-                return [_redact_recursive(item) for item in obj]
+                for i, item in enumerate(obj):
+                    obj[i] = _redact_inplace(item)
             return obj
 
-        cleaned_view = _redact_recursive(manager_view)
+        _redact_inplace(manager_view)
 
         return OutputGuardResult(
-            clean_text=str(cleaned_view),
+            clean_text=str(manager_view),
             violations=[],
             redacted_entities=redacted_all,
         )

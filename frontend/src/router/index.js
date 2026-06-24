@@ -11,7 +11,7 @@ const routes = [
     path: '/employee',
     name: 'EmployeeLayout',
     component: () => import('@/layouts/MainLayout.vue'),
-    meta: { role: 'employee' },
+    meta: { role: ['employee'] },
     children: [
       {
         path: '',
@@ -121,9 +121,12 @@ router.beforeEach((to, from, next) => {
     return
   }
   const requiredRole = to.meta.role || to.matched.find((r) => r.meta.role)?.meta.role
-  if (requiredRole && !requiredRole.includes(auth.role)) {
-    next('/login')
-    return
+  if (requiredRole) {
+    const roles = Array.isArray(requiredRole) ? requiredRole : [requiredRole]
+    if (!roles.includes(auth.role)) {
+      next('/login')
+      return
+    }
   }
   next()
 })

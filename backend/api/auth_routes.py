@@ -14,6 +14,7 @@ from auth.jwt_handler import create_access_token, decode_access_token, extract_b
 from auth.password import hash_password, verify_password
 from auth.rbac import Role, get_client_ip, get_current_user_id, get_current_user_role
 from api.deps import get_audit_service
+from core.config import get_settings
 from core.database import get_db
 from services.audit_service import AuditService
 from services.evaluation_service import EvaluationService
@@ -222,7 +223,13 @@ async def refresh_token(
 async def seed_demo_users(
     session: AsyncSession = Depends(get_db),
 ):
-    """初始化演示账号（仅当库中无该邮箱时创建）。生产环境应删除此接口。"""
+    """初始化演示账号（仅当库中无该邮箱时创建）。仅在演示模式下可用。"""
+    settings = get_settings()
+    if not settings.auth_demo_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="演示模式未开启，此接口不可用。请在开发环境设置 AUTH_DEMO_MODE=true",
+        )
     eval_service = EvaluationService(session)
     demo_accounts = [
         ("E1001", "张三（员工）", "employee@empvalue.ai", "employee", "研发部"),
@@ -251,5 +258,5 @@ async def seed_demo_users(
     return {
         "created": created,
         "default_password": default_password,
-        "note": "演示账号已初始化，生产环境请删除此接口并修改默认密码",
+        "note": "演示账号已初始化，生产环境请关闭演示模式并修改默认密码",
     }

@@ -5,7 +5,7 @@ ModelRouter：硬件探测 + 档位选择 + Provider 路由 + 自动降级
 import logging
 import subprocess
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from .config import Settings, get_settings
 from .providers.base import BaseProvider, ProviderConfig

@@ -3,7 +3,6 @@
 """
 import shutil
 import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -11,15 +10,31 @@ from core.config import get_settings
 
 
 @pytest.fixture(autouse=True)
-def temp_vector_store(monkeypatch):
-    """每个测试使用独立的临时向量库目录，避免 ChromaDB embedding function 冲突。"""
+def test_settings(monkeypatch):
+    """测试环境配置：开启演示模式、使用临时向量库目录。"""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "auth_demo_mode", True)
+
     tmp_dir = tempfile.mkdtemp(prefix="chroma_test_")
-    monkeypatch.setattr(get_settings(), "vector_store_dir", tmp_dir)
+    monkeypatch.setattr(settings, "vector_store_dir", tmp_dir)
 
     yield tmp_dir
 
-    # 清理临时向量库
     try:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def clear_global_state():
+    """每个测试前后清理全局 job_store / thread_store，避免状态泄漏。"""
+    from api import routes as routes_module
+
+    routes_module.job_store.clear()
+    if hasattr(routes_module, "thread_store"):
+        routes_module.thread_store.clear()
+    yield
+    routes_module.job_store.clear()
+    if hasattr(routes_module, "thread_store"):
+        routes_module.thread_store.clear()

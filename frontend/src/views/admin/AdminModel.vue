@@ -143,7 +143,7 @@ async function loadStatus() {
   try {
     const data = await adminApi.modelStatus()
     modelStatus.value = data
-    currentTier.value = data.recommended_tier || 'L0'
+    currentTier.value = data.current_tier || data.recommended_tier || 'L0'
     selectedTier.value = currentTier.value
   } catch (err) {
     console.error('加载模型状态失败:', err)

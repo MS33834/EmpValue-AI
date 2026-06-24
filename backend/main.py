@@ -35,7 +35,7 @@ app.add_middleware(
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allow_headers=["Content-Type", "Authorization", "X-User-Role", "X-User-Id", "X-Trace-Id"],
+    allow_headers=["Content-Type", "Authorization", "X-Trace-Id"],
 )
 
 app.include_router(auth_router)

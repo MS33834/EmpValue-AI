@@ -63,8 +63,8 @@
             <el-table-column prop="period" label="周期" />
             <el-table-column prop="overall_score" label="综合得分" sortable />
             <el-table-column label="状态">
-              <template #default>
-                <el-tag type="success">已审批</el-tag>
+              <template #default="{ row }">
+                <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="created_at" label="创建时间" />
@@ -91,6 +91,22 @@ use([LineChart, TitleComponent, TooltipComponent, GridComponent, CanvasRenderer]
 const auth = useAuthStore()
 const loading = ref(false)
 const evaluations = ref([])
+
+const statusMap = {
+  ai_drafted: { label: 'AI草稿', type: 'info' },
+  manager_review: { label: '主管审核中', type: 'warning' },
+  hr_audit: { label: 'HR复核中', type: 'warning' },
+  approved: { label: '已审批', type: 'success' },
+  rejected: { label: '已驳回', type: 'danger' },
+}
+
+function statusType(status) {
+  return statusMap[status]?.type || 'info'
+}
+
+function statusLabel(status) {
+  return statusMap[status]?.label || status || '未知'
+}
 
 const trendPeriods = computed(() => {
   return [...evaluations.value].reverse().map((e) => e.period)

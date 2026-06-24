@@ -68,10 +68,10 @@ def client(initialized_db):
 
 
 @pytest.fixture
-def mock_app_state(client, temp_vector_store):
+def mock_app_state(client, test_settings):
     """注入 Mock 后的 AppState，避免真实 LLM 调用"""
     settings = Settings(model_tier="L0")
-    settings.vector_store_dir = temp_vector_store
+    settings.vector_store_dir = test_settings
     state = AppState(settings)
 
     prompt_dir = state.prompt_loader.prompts_dir

@@ -76,6 +76,21 @@ async function loadData() {
     pendingCount.value = data.pending_count || 0
     pendingApprovals.value = data.pending || []
     recentApproved.value = data.recent_approved || []
+    // 从后端返回的 risk_stats 或基于 pending 数据计算风险分布
+    if (data.risk_stats) {
+      riskStats.value = data.risk_stats
+    } else if (pendingApprovals.value.length > 0) {
+      const stats = { high: 0, medium: 0, low: 0 }
+      for (const evalItem of pendingApprovals.value) {
+        const score = evalItem.overall_score || 100
+        const riskFlags = evalItem.manager_view?.risk_flags || []
+        const hasCritical = riskFlags.some((r) => r.level === 'critical')
+        if (hasCritical || score < 60) stats.high++
+        else if (score < 75) stats.medium++
+        else stats.low++
+      }
+      riskStats.value = stats
+    }
   } catch (err) {
     console.error('加载主管工作台失败:', err)
     ElMessage.error('加载主管工作台失败')
