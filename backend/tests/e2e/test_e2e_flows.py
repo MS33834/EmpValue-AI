@@ -1,197 +1,311 @@
-# @pytestmark: playwright
 """
-EmpValue-AI E2E 测试（Playwright）
+EmpValue-AI E2E 测试（基于 FastAPI TestClient）
 
-前置条件：
-    1. 后端服务运行在 http://localhost:8000
-    2. 前端服务运行在 http://localhost:5173
-    3. 已执行 POST /api/v1/auth/seed-demo-users 初始化演示账号
+前置条件：无，测试会自行启动内存版后端服务。
 
 运行方式：
     pytest tests/e2e/ -v
-    # 或直接用 playwright
-    playwright test tests/e2e/
 """
 
-import re
-
 import pytest
+from fastapi.testclient import TestClient
+
+from main import app
+from api.deps import AppState
+from agent.prompt_loader import PromptLoader
+from agent.tools import DummyMemoryStore, DummyCompanyKB
+from core.config import get_settings
+from core.database import init_db, close_db
+from core.model_router import ModelRouter
+from core.multimodal import MultimodalCleaner
+from core.providers.base import BaseProvider, ChatCompletion, ChatMessage, ProviderConfig
 
 pytestmark = pytest.mark.e2e
 
-BASE_URL = "http://localhost:5173"
-API_URL = "http://localhost:8000"
+
+class MockProvider(BaseProvider):
+    """E2E 测试专用 Mock Provider，不调用真实 LLM"""
+
+    def __init__(self, config: ProviderConfig = None):
+        super().__init__(config or ProviderConfig(model_name="mock"))
+
+    def name(self) -> str:
+        return "mock/test"
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def chat_completion(
+        self,
+        messages: list[ChatMessage],
+        response_format: dict | None = None,
+    ) -> ChatCompletion:
+        content = (
+            '{"overall_score": 82, '
+            '"employee_view": {'
+            '"summary": "本周表现良好，主导完成了核心功能开发，代码质量稳定，并积极辅导团队成员完成 Code Review，整体协作氛围积极。", '
+            '"strengths": ["主导完成核心功能开发", "代码 Review 通过率 100%", "主动辅导新人"], '
+            '"growth_areas": [{'
+            '"dimension": "协作沟通", '
+            '"score": 80, '
+            '"evidence": ["辅导两名新人完成 CR"], '
+            '"improvement_actions": ["继续扩大技术分享覆盖面"]'
+            '}], '
+            '"next_week_focus": ["完善模块文档", "组织一次技术分享"]'
+            '}, '
+            '"manager_view": {'
+            '"harsh_assessment": "该员工是团队核心产出者，具备较强的独立交付和技术带动作用，但需关注其知识沉淀是否足够系统化。", '
+            '"risk_flags": [], '
+            '"roi_analysis": "高投入高产出，建议作为技术骨干持续培养。", '
+            '"reallocation_suggestion": "继续负责核心模块，可逐步承担架构设计任务。", '
+            '"hidden_issues": ["需观察是否过度依赖个人效率而非团队机制"]'
+            '}, '
+            '"audit": {'
+            '"model_name": "mock-model", '
+            '"model_tier": "L0", '
+            '"confidence_score": 0.85, '
+            '"raw_data_refs": ["e2e-eval-001"], '
+            '"triggered_rules": ["evidence_first", "dual_view_separation"], '
+            '"processing_time_ms": 120, '
+            '"prompt_version": "v1"'
+            '}, '
+            '"status": "ai_drafted"'
+            '}'
+        )
+        return ChatCompletion(content=content, model="mock/test")
 
 
 @pytest.fixture(scope="module")
-def browser_context(playwright):
-    """启动浏览器"""
-    browser = playwright.chromium.launch(headless=True)
-    context = browser.new_context()
-    page = context.new_page()
-    yield page
-    context.close()
-    browser.close()
+def client():
+    """启动 TestClient，自动等待后台任务"""
+    import asyncio
+
+    asyncio.run(init_db())
+
+    # 手动构造 AppState，避免初始化 ChromaDB（防止下载 embedding 模型）
+    settings = get_settings()
+    state = object.__new__(AppState)
+    state.settings = settings
+    state.model_router = ModelRouter(settings)
+    state.prompt_loader = PromptLoader()
+    state.multimodal_cleaner = MultimodalCleaner()
+    state.memory_store = DummyMemoryStore()
+    state.company_kb = DummyCompanyKB()
+    async def _mock_get_provider_with_fallback():
+        return MockProvider(), "L0"
+
+    state.model_router.get_provider_with_fallback = _mock_get_provider_with_fallback
+    app.state.app_state = state
+
+    # 手动管理 TestClient，避免进入 lifespan 重新创建 AppState 并触发 ChromaDB 下载
+    c = TestClient(app)
+    yield c
+    c.close()
+    asyncio.run(close_db())
 
 
-class TestLoginFlow:
-    """登录流程 E2E"""
+@pytest.fixture(scope="module")
+def employee_token(client):
+    """初始化演示账号并登录员工"""
+    client.post("/api/v1/auth/seed-demo-users")
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "employee@empvalue.ai", "password": "empvalue123"},
+    )
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
 
-    def test_demo_login_employee(self, browser_context):
-        """演示模式登录员工端"""
-        page = browser_context
-        page.goto(f"{BASE_URL}/login")
 
-        # 切换到演示模式 tab
-        page.get_by_role("tab", name="演示模式").click()
+@pytest.fixture(scope="module")
+def manager_token(client):
+    """登录主管账号"""
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "manager@empvalue.ai", "password": "empvalue123"},
+    )
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
 
-        # 选择员工角色
-        page.get_by_placeholder("请选择角色").click()
-        page.get_by_role("option", name="员工").click()
 
-        # 点击进入系统
-        page.get_by_role("button", name="进入系统").click()
+class TestHealthAndAuth:
+    """健康检查与认证流程"""
 
-        # 应跳转到员工页面
-        page.wait_for_url("**/employee**", timeout=5000)
-        assert "/employee" in page.url
+    def test_health_check(self, client):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
 
-    def test_jwt_login_employee(self, browser_context):
-        """JWT 登录员工端（需后端运行 + 演示账号已初始化）"""
-        page = browser_context
-        page.goto(f"{BASE_URL}/login")
+    def test_register_and_login(self, client):
+        """注册 → 登录 → /me"""
+        register_payload = {
+            "user_id": "E2E001",
+            "name": "E2E测试用户",
+            "email": "e2e-test@empvalue.ai",
+            "password": "e2etest123",
+            "role": "employee",
+        }
+        resp = client.post("/api/v1/auth/register", json=register_payload)
+        assert resp.status_code in (201, 409)
 
-        # 确保在账号登录 tab
-        page.get_by_role("tab", name="账号登录").click()
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"email": "e2e-test@empvalue.ai", "password": "e2etest123"},
+        )
+        assert resp.status_code == 200
+        token = resp.json()["access_token"]
 
-        # 填写邮箱密码
-        page.get_by_placeholder("请输入邮箱").fill("employee@empvalue.ai")
-        page.get_by_placeholder("请输入密码").fill("empvalue123")
-
-        # 点击登录
-        page.get_by_role("button", name="登录").click()
-
-        # 应跳转到员工页面
-        page.wait_for_url("**/employee**", timeout=10000)
-        assert "/employee" in page.url
+        resp = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["user_id"] == "E2E001"
 
 
 class TestEmployeeFlow:
-    """员工操作流程 E2E"""
+    """员工端核心流程"""
 
-    def test_employee_submit_input(self, browser_context):
-        """员工提交日报"""
-        page = browser_context
-        # 先登录
-        page.goto(f"{BASE_URL}/login")
-        page.get_by_role("tab", name="演示模式").click()
-        page.get_by_placeholder("请选择角色").click()
-        page.get_by_role("option", name="员工").click()
-        page.get_by_role("button", name="进入系统").click()
-        page.wait_for_url("**/employee**", timeout=5000)
+    def test_submit_input(self, client, employee_token):
+        headers = {"Authorization": f"Bearer {employee_token}"}
+        payload = {
+            "employee_id": "E1001",
+            "period": "2026-W50",
+            "type": "daily_report",
+            "content": "E2E 测试日报：完成模块重构，性能提升 30%。",
+        }
+        resp = client.post("/api/v1/inputs", json=payload, headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["employee_id"] == "E1001"
+        assert data["period"] == "2026-W50"
 
-        # 导航到输入页（如有）
-        # 实际选择器需根据前端页面结构调整
-        # page.click("text=提交日报")
-        # page.fill("[data-testid=content]", "E2E 测试日报内容")
-        # page.click("button:has-text('提交')")
-
-
-class TestManagerFlow:
-    """主管审批流程 E2E"""
-
-    def test_manager_view_dashboard(self, browser_context):
-        """主管查看仪表盘"""
-        page = browser_context
-        page.goto(f"{BASE_URL}/login")
-        page.get_by_role("tab", name="演示模式").click()
-        page.get_by_placeholder("请选择角色").click()
-        page.get_by_role("option", name="主管").click()
-        page.get_by_role("button", name="进入系统").click()
-        page.wait_for_url("**/manager**", timeout=5000)
-        assert "/manager" in page.url
+    def test_employee_dashboard(self, client, employee_token):
+        headers = {"Authorization": f"Bearer {employee_token}"}
+        resp = client.get("/api/v1/employees/E1001/dashboard", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["employee_id"] == "E1001"
 
 
-class TestApiIntegration:
-    """API 集成测试（通过 Playwright 发起请求）"""
+class TestEvaluationFlow:
+    """评估 + 审批完整流程"""
 
-    def test_health_check(self, browser_context):
-        """健康检查"""
-        page = browser_context
-        response = page.request.get(f"{API_URL}/health")
-        assert response.status == 200
-        body = response.json()
-        assert body["status"] == "ok"
+    def test_create_evaluation_job(self, client, employee_token):
+        headers = {"Authorization": f"Bearer {employee_token}"}
+        payload = {
+            "employee_id": "E1001",
+            "period": "2026-W50",
+            "raw_inputs": [
+                {
+                    "input_id": "e2e-eval-001",
+                    "type": "daily_report",
+                    "content": "本周主导完成核心功能开发，代码 Review 通过率 100%。",
+                }
+            ],
+        }
+        resp = client.post("/api/v1/evaluations", json=payload, headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "pending"
+        assert "job_id" in data
 
-    def test_auth_flow(self, browser_context):
-        """认证全流程：注册 → 登录 → /me"""
-        page = browser_context
-
-        # 注册
-        resp = page.request.post(
-            f"{API_URL}/api/v1/auth/register",
-            data={
-                "user_id": "E2E001",
-                "name": "E2E测试用户",
-                "email": "e2e-test@empvalue.ai",
-                "password": "e2etest123",
-                "role": "employee",
-            },
-        )
-        assert resp.status in (201, 409)  # 409 = 已存在
-
-        # 登录
-        resp = page.request.post(
-            f"{API_URL}/api/v1/auth/login",
-            data={"email": "e2e-test@empvalue.ai", "password": "e2etest123"},
-        )
-        assert resp.status == 200
-        token = resp.json()["access_token"]
-
-        # /me
-        resp = page.request.get(
-            f"{API_URL}/api/v1/auth/me",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert resp.status == 200
-        assert resp.json()["user_id"] == "E2E001"
-
-    def test_evaluation_interrupt_flow(self, browser_context):
-        """interrupt 审批流 E2E"""
-        page = browser_context
-
-        # 登录获取 manager token
-        resp = page.request.post(
-            f"{API_URL}/api/v1/auth/login",
-            data={"email": "manager@empvalue.ai", "password": "empvalue123"},
-        )
-        if resp.status != 200:
-            pytest.skip("演示账号未初始化")
-        token = resp.json()["access_token"]
-        headers = {"Authorization": f"Bearer {token}"}
-
-        # 启动 interrupt 评估
-        resp = page.request.post(
-            f"{API_URL}/api/v1/evaluations-interrupt",
-            data={
-                "employee_id": "E2E002",
-                "period": "2026-W26",
-                "raw_inputs": [
-                    {"input_id": "e2e-001", "content": "E2E 测试 interrupt 流程"}
-                ],
-            },
+        # TestClient 已自动等待后台任务完成
+        job_resp = client.get(
+            f"/api/v1/evaluations/jobs/{data['job_id']}",
             headers=headers,
         )
-        assert resp.status == 200
+        job = job_resp.json()
+        assert job["status"] == "completed", f"评估任务未成功完成: {job}"
+        evaluation = job["evaluation"]
+        assert "evaluation_id" in evaluation
+        assert evaluation["employee_id"] == "E1001"
+
+    def test_manager_approve_evaluation(self, client, manager_token, employee_token):
+        employee_headers = {"Authorization": f"Bearer {employee_token}"}
+        payload = {
+            "employee_id": "E1001",
+            "period": "2026-W51",
+            "raw_inputs": [
+                {
+                    "input_id": "e2e-approve-001",
+                    "type": "daily_report",
+                    "content": "本周提前交付需求，客户反馈零 Bug。",
+                }
+            ],
+        }
+        resp = client.post("/api/v1/evaluations", json=payload, headers=employee_headers)
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        job_resp = client.get(
+            f"/api/v1/evaluations/jobs/{job_id}",
+            headers=employee_headers,
+        )
+        job = job_resp.json()
+        assert job["status"] == "completed"
+        evaluation_id = job["evaluation"]["evaluation_id"]
+
+        # 主管审批
+        manager_headers = {"Authorization": f"Bearer {manager_token}"}
+        resp = client.post(
+            f"/api/v1/evaluations/{evaluation_id}/approve",
+            json={"comment": "E2E 审批通过"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "approved"
+
+        # 查询结果
+        resp = client.get(
+            f"/api/v1/evaluations/{evaluation_id}",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "approved"
+
+
+class TestInterruptFlow:
+    """LangGraph 原生 interrupt 审批流"""
+
+    def test_evaluation_interrupt(self, client, manager_token):
+        headers = {"Authorization": f"Bearer {manager_token}"}
+        payload = {
+            "employee_id": "E2E002",
+            "period": "2026-W52",
+            "raw_inputs": [
+                {
+                    "input_id": "e2e-interrupt-001",
+                    "type": "daily_report",
+                    "content": "E2E interrupt 流程测试日报。",
+                }
+            ],
+        }
+        resp = client.post("/api/v1/evaluations-interrupt", json=payload, headers=headers)
+        assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "awaiting_review"
         thread_id = data["thread_id"]
 
         # 恢复审批
-        resp = page.request.post(
-            f"{API_URL}/api/v1/evaluations-interrupt/{thread_id}/resume",
-            data={"action": "approve", "comment": "E2E 审批通过"},
+        resp = client.post(
+            f"/api/v1/evaluations-interrupt/{thread_id}/resume",
+            json={"action": "approve", "comment": "E2E interrupt 审批通过"},
             headers=headers,
         )
-        assert resp.status == 200
+        assert resp.status_code == 200
         assert resp.json()["status"] == "approved"
+
+
+class TestRBAC:
+    """权限控制验证"""
+
+    def test_employee_cannot_access_manager_view(self, client, employee_token):
+        headers = {"Authorization": f"Bearer {employee_token}"}
+        resp = client.get("/api/v1/manager/dashboard", headers=headers)
+        assert resp.status_code == 403
+
+    def test_manager_can_access_pending_approvals(self, client, manager_token):
+        headers = {"Authorization": f"Bearer {manager_token}"}
+        resp = client.get("/api/v1/manager/pending-approvals", headers=headers)
+        assert resp.status_code == 200
+        assert "pending" in resp.json()

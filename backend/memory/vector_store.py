@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -17,8 +18,37 @@ from core.embeddings import EmbeddingClient
 logger = logging.getLogger(__name__)
 
 
-def _init_embedding(settings: Settings) -> Optional[EmbeddingClient]:
-    """优先使用配置的真实 embedding API；未配置则降级到 ChromaDB 默认 embedding"""
+class DummyEmbeddingFunction:
+    """本地测试/演示用 dummy embedding，避免首次启动时下载 ONNX 模型。"""
+
+    def __init__(self, dimensions: int = 384):
+        self.dimensions = dimensions
+
+    def name(self) -> str:
+        return "dummy"
+
+    def is_legacy(self) -> bool:
+        return False
+
+    def supported_spaces(self) -> List[str]:
+        return ["cosine", "l2", "ip"]
+
+    def __call__(self, input: List[str]) -> List[List[float]]:
+        """基于文本 hash 生成确定性伪向量"""
+        results = []
+        for text in input:
+            seed = int(hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest(), 16)
+            vec = []
+            for i in range(self.dimensions):
+                # 简单的伪随机 + 归一化前准备
+                seed = (seed * 9301 + 49297) % 233280
+                vec.append((seed / 233280.0) * 2 - 1)
+            results.append(vec)
+        return results
+
+
+def _init_embedding(settings: Settings):
+    """优先使用配置的真实 embedding API；未配置则使用 dummy embedding，避免下载模型。"""
     has_key = bool(
         settings.embedding_api_key
         or settings.cloud_api_key
@@ -28,8 +58,9 @@ def _init_embedding(settings: Settings) -> Optional[EmbeddingClient]:
         try:
             return EmbeddingClient(settings)
         except Exception as e:
-            logger.warning(f"EmbeddingClient 初始化失败，降级到默认 embedding: {e}")
-    return None
+            logger.warning(f"EmbeddingClient 初始化失败，降级到 dummy embedding: {e}")
+    logger.info("未配置 embedding key，使用 dummy embedding（仅适合测试/演示）")
+    return DummyEmbeddingFunction(dimensions=settings.embedding_dimensions or 384)
 
 
 class ChromaMemoryStore(MemoryStore):
@@ -49,6 +80,7 @@ class ChromaMemoryStore(MemoryStore):
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
+            embedding_function=self.embedding,
         )
 
     async def get_employee_history(
@@ -66,7 +98,7 @@ class ChromaMemoryStore(MemoryStore):
             where["period"] = {"$ne": period}
         query_kwargs["where"] = where
 
-        if self.embedding:
+        if self.embedding and hasattr(self.embedding, "embed_query"):
             query_kwargs["query_embeddings"] = [await self.embedding.embed_query(query)]
         else:
             query_kwargs["query_texts"] = [query]
@@ -115,7 +147,7 @@ class ChromaMemoryStore(MemoryStore):
             ],
         }
 
-        if self.embedding:
+        if self.embedding and hasattr(self.embedding, "embed_query"):
             try:
                 upsert_kwargs["embeddings"] = [await self.embedding.embed_query(document)]
             except Exception as e:
@@ -142,12 +174,13 @@ class ChromaCompanyKB(CompanyKB):
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
+            embedding_function=self.embedding,
         )
 
     async def query(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """向量检索公司知识库"""
         query_kwargs: Dict[str, Any] = {"n_results": top_k, "include": ["metadatas", "documents", "distances"]}
-        if self.embedding:
+        if self.embedding and hasattr(self.embedding, "embed_query"):
             query_kwargs["query_embeddings"] = [await self.embedding.embed_query(query)]
         else:
             query_kwargs["query_texts"] = [query]
@@ -197,7 +230,7 @@ class ChromaCompanyKB(CompanyKB):
                 }
             ],
         }
-        if self.embedding:
+        if self.embedding and hasattr(self.embedding, "embed_query"):
             try:
                 upsert_kwargs["embeddings"] = [await self.embedding.embed_query(document)]
             except Exception as e:
