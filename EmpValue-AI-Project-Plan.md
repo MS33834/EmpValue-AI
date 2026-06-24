@@ -304,18 +304,17 @@ class EmployeeEvaluation(BaseModel):
 
 | 层级 | 技术 |
 |---|---|
-| 前端 | Vue 3 + TypeScript + Element Plus + ECharts |
-| 后端 | Python 3.11 + FastAPI + SQLAlchemy |
-| Agent 编排 | LangGraph + LangChain |
+| 前端 | Vue 3 + JavaScript + Element Plus + ECharts |
+| 后端 | Python 3.11+ + FastAPI + SQLAlchemy |
+| Agent 编排 | LangGraph |
 | AI 运行环境 | LM Studio / Ollama（本地）、OpenAI / Anthropic / 阿里云百炼 / DeepSeek API（云端） |
 | 本地大模型 | Qwen2.5 系列 / DeepSeek-R1-Distill / Llama 3.1 |
-| 关系型数据库 | PostgreSQL 15+ |
-| 向量数据库 | ChromaDB / Milvus |
-| 缓存/消息队列 | Redis + Celery / RQ |
-| 对象存储 | MinIO（本地）/ 阿里云 OSS（云端） |
-| 可观测性 | Langfuse + Prometheus + Grafana |
-| 测试 | pytest + Playwright + LLM-as-a-Judge |
-| 部署 | Docker Compose（本地）/ Kubernetes（生产） |
+| 关系型数据库 | SQLite（默认）/ PostgreSQL 15+（生产） |
+| 向量数据库 | ChromaDB |
+| 缓存/任务队列 | Redis（预留，当前使用 FastAPI BackgroundTasks） |
+| 可观测性 | Langfuse（Prometheus/Grafana 规划中） |
+| 测试 | pytest + locust |
+| 部署 | Docker Compose |
 
 ---
 

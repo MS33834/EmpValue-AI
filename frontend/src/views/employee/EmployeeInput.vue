@@ -52,6 +52,7 @@
 <script setup>
 import { reactive, ref, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useEvaluationStore, cancelPolling } from '@/stores/evaluation'
 import { useAuthStore } from '@/stores/auth'
 
@@ -71,13 +72,32 @@ const resultTitle = ref('')
 const resultSubtitle = ref('')
 const polling = ref(false)
 
+function genId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 async function submit() {
+  if (!form.period.trim()) {
+    ElMessage.warning('请输入评估周期')
+    return
+  }
+  if (!form.content.trim()) {
+    ElMessage.warning('请输入日报内容')
+    return
+  }
   const rawInputs = [
-    { input_id: `daily-${crypto.randomUUID()}`, type: 'daily_report', content: form.content, attachments: [] },
+    { input_id: `daily-${genId()}`, type: 'daily_report', content: form.content, attachments: [] },
   ]
   if (form.tasks.trim()) {
     rawInputs.push({
-      input_id: `task-${crypto.randomUUID()}`,
+      input_id: `task-${genId()}`,
       type: 'task_progress',
       content: form.tasks,
       attachments: [],

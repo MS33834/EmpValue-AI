@@ -3,6 +3,18 @@ E2E 测试配置
 """
 import pytest
 
+from core.config import get_settings
+
+
+@pytest.fixture(autouse=True, scope="module")
+def e2e_demo_mode():
+    """E2E 测试需要开启演示模式以使用 seed-demo-users 接口"""
+    settings = get_settings()
+    original = settings.auth_demo_mode
+    settings.auth_demo_mode = True
+    yield
+    settings.auth_demo_mode = original
+
 
 def pytest_collection_modifyitems(config, items):
     """为 e2e 测试添加标记"""

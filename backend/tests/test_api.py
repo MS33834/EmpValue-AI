@@ -111,13 +111,13 @@ def test_model_status_admin(client, mock_app_state):
     assert "recommended_tier" in data
 
 
-def _wait_for_job(client, job_id: str, timeout: float = 10.0) -> dict:
+def _wait_for_job(client, job_id: str, timeout: float = 10.0, headers=None) -> dict:
     """轮询异步评估任务，直到完成或超时"""
     import time
 
     start = time.time()
     while time.time() - start < timeout:
-        resp = client.get(f"/api/v1/evaluations/jobs/{job_id}")
+        resp = client.get(f"/api/v1/evaluations/jobs/{job_id}", headers=headers or {})
         assert resp.status_code == 200
         job = resp.json()
         if job["status"] in ("completed", "failed"):
@@ -134,13 +134,13 @@ def test_create_evaluation(client, mock_app_state):
             {"input_id": "daily-001", "content": "完成了登录模块重构"},
         ],
     }
-    resp = client.post("/api/v1/evaluations", json=payload)
+    resp = client.post("/api/v1/evaluations", json=payload, headers={"x-user-id": "E1001"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "pending"
     assert "job_id" in data
 
-    job = _wait_for_job(client, data["job_id"])
+    job = _wait_for_job(client, data["job_id"], headers={"x-user-id": "E1001"})
     assert job["status"] == "completed"
     assert job["evaluation"]["employee_id"] == "E1001"
 
@@ -155,9 +155,9 @@ def created_evaluation_id(client, mock_app_state):
             {"input_id": "daily-001", "content": "完成了登录模块重构"},
         ],
     }
-    resp = client.post("/api/v1/evaluations", json=payload)
+    resp = client.post("/api/v1/evaluations", json=payload, headers={"x-user-id": "E1001"})
     assert resp.status_code == 200
-    job = _wait_for_job(client, resp.json()["job_id"])
+    job = _wait_for_job(client, resp.json()["job_id"], headers={"x-user-id": "E1001"})
     assert job["status"] == "completed"
     return job["evaluation"]["evaluation_id"]
 
@@ -329,7 +329,7 @@ def test_create_input(client, mock_app_state):
         "type": "daily_report",
         "content": "本周完成了用户管理模块开发",
     }
-    resp = client.post("/api/v1/inputs", json=payload)
+    resp = client.post("/api/v1/inputs", json=payload, headers={"x-user-id": "E1002"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["employee_id"] == "E1002"
@@ -548,3 +548,125 @@ def test_interrupt_resume_invalid_action(client, mock_app_state):
         headers={"x-user-role": "manager"},
     )
     assert resp.status_code == 400
+
+
+# ---------------- 权限与边界用例 ----------------
+
+
+def test_employee_cannot_access_other_evaluation(client, mock_app_state, created_evaluation_id):
+    """employee 角色访问他人评估时返回 403"""
+    # created_evaluation_id 已为 E1001 创建评估，用 E9999 访问应被拒绝
+    resp = client.get(
+        f"/api/v1/evaluations/{created_evaluation_id}",
+        headers={"x-user-id": "E9999"},
+    )
+    assert resp.status_code == 403
+
+
+def test_employee_cannot_create_input_for_others(client, mock_app_state):
+    """employee 角色为他人提交输入时，employee_id 被强制为自己的 ID"""
+    payload = {
+        "employee_id": "E1004",
+        "period": "2026-W25",
+        "type": "daily_report",
+        "content": "尝试为他人提交输入",
+    }
+    resp = client.post("/api/v1/inputs", json=payload, headers={"x-user-id": "E1003"})
+    assert resp.status_code == 200
+    data = resp.json()
+    # employee_id 被强制覆盖为当前用户 E1003
+    assert data["employee_id"] == "E1003"
+
+
+def test_get_input_not_found(client, mock_app_state):
+    """查询不存在的 input_id 返回 404"""
+    resp = client.get(
+        "/api/v1/inputs/nonexistent-id",
+        headers={"x-user-role": "manager"},
+    )
+    assert resp.status_code == 404
+
+
+def test_list_inputs(client, mock_app_state):
+    """测试 GET /api/v1/inputs 列表接口"""
+    # 先创建一个 input
+    payload = {
+        "employee_id": "E1005",
+        "period": "2026-W25",
+        "type": "daily_report",
+        "content": "列表接口测试输入",
+    }
+    resp = client.post("/api/v1/inputs", json=payload, headers={"x-user-id": "E1005"})
+    assert resp.status_code == 200
+
+    # 查询列表（manager 可见全部）
+    resp = client.get(
+        "/api/v1/inputs",
+        headers={"x-user-role": "manager"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] >= 1
+
+
+def test_get_evaluation_job_not_found(client, mock_app_state):
+    """查询不存在的 job_id 返回 404"""
+    resp = client.get("/api/v1/evaluations/jobs/nonexistent-job")
+    assert resp.status_code == 404
+
+
+def test_employee_cannot_access_job_of_others(client, mock_app_state):
+    """employee 查看他人任务返回 403"""
+    # 用 E1001 创建评估任务
+    payload = {
+        "employee_id": "E1001",
+        "period": "2026-W25",
+        "raw_inputs": [
+            {"input_id": "daily-job-001", "content": "测试 job 权限隔离"},
+        ],
+    }
+    resp = client.post("/api/v1/evaluations", json=payload, headers={"x-user-id": "E1001"})
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+
+    # 用 E9999 的 header 查询该 job_id，应返回 403
+    resp = client.get(
+        f"/api/v1/evaluations/jobs/{job_id}",
+        headers={"x-user-id": "E9999"},
+    )
+    assert resp.status_code == 403
+
+
+def test_re_evaluate_persists_to_db(client, mock_app_state, created_evaluation_id):
+    """re-evaluate 后数据库状态确实更新"""
+    # 先审批通过
+    client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/approve",
+        json={"current_status": "manager_review", "actor_id": "M001"},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+
+    # 调用 re-evaluate
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/re-evaluate",
+        json={"actor_id": "M001", "feedback": ["请重点关注代码质量"]},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    assert resp.status_code == 200
+
+    # 用 GET /evaluations/{id} 查询，断言状态已更新（不再是 approved）
+    resp = client.get(
+        f"/api/v1/evaluations/{created_evaluation_id}",
+        headers={"x-user-role": "manager"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] in ("manager_review", "hr_audit")
+    assert data["status"] != "approved"
+
+
+def test_seed_demo_users_disabled_in_production(client, mock_app_state, monkeypatch):
+    """非演示模式下 seed-demo-users 返回 403"""
+    monkeypatch.setattr(get_settings(), "auth_demo_mode", False)
+    resp = client.post("/api/v1/auth/seed-demo-users")
+    assert resp.status_code == 403

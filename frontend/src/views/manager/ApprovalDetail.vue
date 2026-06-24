@@ -54,6 +54,8 @@
       </el-form>
     </el-card>
 
+    <el-skeleton v-else-if="loading" :rows="6" animated />
+
     <el-empty v-else description="未找到评估数据" />
   </div>
 </template>

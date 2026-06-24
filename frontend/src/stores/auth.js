@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { authApi } from '@/api/client'
 
 function defaultUserId(role) {
   const map = {
@@ -62,6 +63,22 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('empvalue_token')
   }
 
+  async function checkAuth() {
+    if (!useJwt.value) return true
+    try {
+      const data = await authApi.me()
+      if (data) {
+        role.value = data.role || role.value
+        userId.value = data.user_id || userId.value
+        name.value = data.name || name.value
+      }
+      return true
+    } catch (err) {
+      logout()
+      return false
+    }
+  }
+
   return {
     role,
     userId,
@@ -73,5 +90,6 @@ export const useAuthStore = defineStore('auth', () => {
     loginWithToken,
     loginDemo,
     logout,
+    checkAuth,
   }
 })

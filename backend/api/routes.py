@@ -109,6 +109,7 @@ async def _run_evaluation_job(
                         employee_id=employee_id,
                         details={"period": period, "model_tier": evaluation.get("audit", {}).get("model_tier")},
                     )
+                    await session.commit()
                     _update_job(
                         job_id,
                         {
@@ -143,6 +144,10 @@ async def create_input(
             detail="employee_id、period、content 必填",
         )
 
+    # employee 角色只能为自己提交输入
+    if role == Role.EMPLOYEE:
+        employee_id = get_current_user_id(request)
+
     input_id = payload.get("input_id") or f"input-{uuid.uuid4().hex[:8]}"
     raw = await eval_service.create_raw_input(
         {
@@ -176,12 +181,16 @@ async def create_input(
 
 @router.get("/inputs", response_model=Dict[str, Any])
 async def list_inputs(
+    request: Request,
     employee_id: Optional[str] = None,
     period: Optional[str] = None,
     eval_service: EvaluationService = Depends(get_evaluation_service),
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """查询原始输入列表"""
+    # employee 只能查看自己的输入
+    if role == Role.EMPLOYEE:
+        employee_id = get_current_user_id(request)
     inputs = await eval_service.list_raw_inputs(employee_id=employee_id, period=period)
     return {
         "inputs": [
@@ -202,6 +211,7 @@ async def list_inputs(
 @router.get("/inputs/{input_id}")
 async def get_input(
     input_id: str,
+    request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
@@ -209,6 +219,11 @@ async def get_input(
     raw = await eval_service.get_raw_input(input_id)
     if not raw:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="输入不存在")
+    # employee 只能查看自己的输入
+    if role == Role.EMPLOYEE:
+        current_user_id = get_current_user_id(request)
+        if raw.employee_id != current_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该输入")
     return {
         "input_id": raw.input_id,
         "employee_id": raw.employee_id,
@@ -224,8 +239,10 @@ async def get_input(
 async def create_evaluation(
     payload: Dict[str, Any],
     background_tasks: BackgroundTasks,
+    request: Request,
     app_state: AppState = Depends(get_app_state),
     eval_service: EvaluationService = Depends(get_evaluation_service),
+    session: AsyncSession = Depends(get_db),
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """异步触发一次员工评估，立即返回 job_id"""
@@ -238,6 +255,10 @@ async def create_evaluation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="employee_id 和 period 必填",
         )
+
+    # employee 角色只能为自己创建评估
+    if role == Role.EMPLOYEE:
+        employee_id = get_current_user_id(request)
 
     # 确保用户存在
     await eval_service.ensure_user_exists(employee_id, role="employee")
@@ -265,6 +286,8 @@ async def create_evaluation(
             for i in inputs
         ]
 
+    await session.commit()
+
     job_id = f"job-{uuid.uuid4().hex[:12]}"
     job_store[job_id] = {
         "job_id": job_id,
@@ -290,12 +313,18 @@ async def create_evaluation(
 @router.get("/evaluations/jobs/{job_id}")
 async def get_evaluation_job(
     job_id: str,
+    request: Request,
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """查询异步评估任务状态"""
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+    # employee 只能查看自己的任务
+    if role == Role.EMPLOYEE:
+        current_user_id = get_current_user_id(request)
+        if job.get("employee_id") != current_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该任务")
     return job
 
 
@@ -364,6 +393,7 @@ async def get_employee_view(
 @router.get("/evaluations/{evaluation_id}/manager-view")
 async def get_manager_view(
     evaluation_id: str,
+    request: Request,
     role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
     eval_service: EvaluationService = Depends(get_evaluation_service),
 ):

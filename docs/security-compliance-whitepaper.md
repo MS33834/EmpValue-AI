@@ -215,8 +215,11 @@ RAW_DATA → AI_PROCESSING → AI_DRAFTED → MANAGER_REVIEW → HR_AUDIT → AP
 - [ ] 已完成员工知情同意签署
 - [ ] 已配置 TLS 1.3
 - [ ] 已启用审计日志并设置保留策略
-- [ ] 已删除或禁用 `seed-demo-users` 接口
+- [ ] 已设置 `AUTH_DEMO_MODE=false`（生产环境必须）
+- [ ] 已替换默认 `JWT_SECRET_KEY` 为强随机密钥
+- [ ] 已禁用或限制 `seed-demo-users` 接口（演示模式关闭后自动禁用）
 - [ ] 已修改默认演示账号密码
+- [ ] nginx 已配置过滤客户端伪造的 `x-user-*` 头
 - [ ] 已完成公平性审计
 - [ ] 已完成红队测试
 - [ ] 已制定人工最终决策流程

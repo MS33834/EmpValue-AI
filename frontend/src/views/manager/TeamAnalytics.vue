@@ -68,7 +68,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { managerApi } from '@/api/client'
 import VChart from 'vue-echarts'
@@ -135,6 +135,8 @@ async function loadData() {
     loading.value = false
   }
 }
+
+onMounted(loadData)
 </script>
 
 <style scoped>

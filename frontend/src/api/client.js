@@ -26,15 +26,53 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+let isRefreshing = false
+let refreshPromise = null
+
+function redirectToLogin() {
+  useAuthStore().logout()
+  window.location.href = '/login'
+}
+
 api.interceptors.response.use(
   (response) => response.data,
-  (error) => {
-    if (error.response?.status === 401) {
-      import('@/stores/auth').then(({ useAuthStore }) => {
-        useAuthStore().logout()
-        window.location.href = '/login'
-      })
+  async (error) => {
+    const originalRequest = error.config
+    const status = error.response?.status
+    const isRefreshReq = originalRequest?.url?.includes('/auth/refresh')
+
+    if (status === 401 && originalRequest && !originalRequest._retry && !isRefreshReq) {
+      const authStore = useAuthStore()
+      if (!authStore.useJwt) {
+        redirectToLogin()
+        return Promise.reject(new Error('登录已过期，请重新登录'))
+      }
+      originalRequest._retry = true
+      try {
+        if (!isRefreshing) {
+          isRefreshing = true
+          refreshPromise = authApi.refresh().finally(() => {
+            isRefreshing = false
+            refreshPromise = null
+          })
+        }
+        const data = await refreshPromise
+        const newToken = data?.token || data?.access_token
+        if (newToken) {
+          authStore.token = newToken
+          localStorage.setItem('empvalue_token', newToken)
+        }
+        return api(originalRequest)
+      } catch (refreshErr) {
+        redirectToLogin()
+        return Promise.reject(new Error('登录已过期，请重新登录'))
+      }
     }
+
+    if (status === 401 && !isRefreshReq) {
+      redirectToLogin()
+    }
+
     const message = error.response?.data?.detail || error.message || '请求失败'
     return Promise.reject(new Error(message))
   }

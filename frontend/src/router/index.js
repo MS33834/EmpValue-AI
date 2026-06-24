@@ -110,7 +110,9 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
+let authChecked = false
+
+router.beforeEach(async (to, from, next) => {
   const auth = useAuthStore()
   if (to.path === '/login') {
     next()
@@ -119,6 +121,14 @@ router.beforeEach((to, from, next) => {
   if (!auth.isLoggedIn) {
     next('/login')
     return
+  }
+  if (!authChecked) {
+    authChecked = true
+    const ok = await auth.checkAuth()
+    if (!ok) {
+      next('/login')
+      return
+    }
   }
   const requiredRole = to.meta.role || to.matched.find((r) => r.meta.role)?.meta.role
   if (requiredRole) {

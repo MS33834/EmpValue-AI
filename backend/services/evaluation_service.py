@@ -1,8 +1,10 @@
 """
 评估相关数据库服务
 封装 evaluations、raw_inputs、feedback、users、memories、company_kb 的 CRUD。
+事务边界统一由路由层控制：service 层方法不 commit，仅 add/update 后返回。
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -19,9 +21,9 @@ class EvaluationService:
         self.session = session
 
     async def create_raw_input(self, data: Dict) -> RawInput:
-        """创建原始输入"""
+        """创建原始输入（不 commit，由调用方控制事务）"""
         raw = RawInput(
-            input_id=data.get("input_id"),
+            input_id=data.get("input_id") or f"INPUT-{uuid.uuid4().hex[:12]}",
             employee_id=data["employee_id"],
             period=data["period"],
             type=data.get("type", "daily_report"),
@@ -29,8 +31,7 @@ class EvaluationService:
             attachments=data.get("attachments", []),
         )
         self.session.add(raw)
-        await self.session.commit()
-        await self.session.refresh(raw)
+        await self.session.flush()
         return raw
 
     async def get_raw_input(self, input_id: str) -> Optional[RawInput]:
@@ -54,7 +55,7 @@ class EvaluationService:
         return result.scalars().all()
 
     async def create_evaluation(self, evaluation_data: Dict) -> Evaluation:
-        """保存评估结果，并同步拆分维度得分与证据引用"""
+        """保存评估结果，并同步拆分维度得分与证据引用（不 commit，由调用方控制事务）"""
         evaluation = Evaluation(
             evaluation_id=evaluation_data["evaluation_id"],
             employee_id=evaluation_data["employee_id"],
@@ -76,6 +77,7 @@ class EvaluationService:
                 period=evaluation_data["period"],
                 dimension=area.get("dimension", ""),
                 score=area.get("score", 0),
+                improvement_actions=area.get("improvement_actions", []),
             )
             self.session.add(dim)
             for evidence in area.get("evidence", []):
@@ -86,8 +88,7 @@ class EvaluationService:
                 )
                 self.session.add(ref)
 
-        await self.session.commit()
-        await self.session.refresh(evaluation)
+        await self.session.flush()
         return evaluation
 
     async def get_evaluation(self, evaluation_id: str) -> Optional[Evaluation]:
@@ -106,11 +107,20 @@ class EvaluationService:
         evaluation = await self.get_evaluation(evaluation_id)
         if not evaluation:
             return None
+        old_status = evaluation.status
         evaluation.status = new_status
-        if approver_id:
-            evaluation.approver_id = approver_id
+
         if new_status == "approved":
             evaluation.approved_at = datetime.now(timezone.utc)
+            if approver_id:
+                evaluation.approver_id = approver_id
+        elif old_status == "approved" and new_status != "approved":
+            # 离开 approved 状态时重置审批信息
+            evaluation.approved_at = None
+            evaluation.approver_id = None
+        elif approver_id:
+            evaluation.approver_id = approver_id
+
         return evaluation
 
     async def update_evaluation(
@@ -122,13 +132,20 @@ class EvaluationService:
         evaluation = await self.get_evaluation(evaluation_id)
         if not evaluation:
             return None
+        old_status = evaluation.status
         evaluation.employee_view = evaluation_data.get("employee_view", evaluation.employee_view)
         evaluation.manager_view = evaluation_data.get("manager_view", evaluation.manager_view)
         evaluation.audit = evaluation_data.get("audit", evaluation.audit)
         evaluation.overall_score = evaluation_data.get("overall_score", evaluation.overall_score)
         evaluation.status = evaluation_data.get("status", evaluation.status)
-        if evaluation.status == "approved":
+
+        new_status = evaluation.status
+        if new_status == "approved":
             evaluation.approved_at = datetime.now(timezone.utc)
+        elif old_status == "approved" and new_status != "approved":
+            evaluation.approved_at = None
+            evaluation.approver_id = None
+
         return evaluation
 
     async def list_evaluations(
@@ -147,16 +164,16 @@ class EvaluationService:
         return result.scalars().all()
 
     async def create_feedback(self, data: Dict) -> Feedback:
+        """创建反馈（不 commit，由调用方控制事务）"""
         feedback = Feedback(
-            feedback_id=data.get("feedback_id"),
+            feedback_id=data.get("feedback_id") or f"FB-{uuid.uuid4().hex[:12]}",
             evaluation_id=data["evaluation_id"],
             employee_id=data["employee_id"],
             type=data.get("type", "feedback"),
             content=data["content"],
         )
         self.session.add(feedback)
-        await self.session.commit()
-        await self.session.refresh(feedback)
+        await self.session.flush()
         return feedback
 
     async def get_user(self, user_id: str) -> Optional[User]:
@@ -172,6 +189,7 @@ class EvaluationService:
         return result.scalar_one_or_none()
 
     async def create_user(self, data: Dict) -> User:
+        """创建用户（不 commit，由调用方控制事务）"""
         user = User(
             user_id=data["user_id"],
             name=data["name"],
@@ -181,8 +199,7 @@ class EvaluationService:
             password_hash=data.get("password_hash"),
         )
         self.session.add(user)
-        await self.session.commit()
-        await self.session.refresh(user)
+        await self.session.flush()
         return user
 
     async def ensure_user_exists(self, user_id: str, name: str = "", role: str = "employee") -> User:
@@ -210,7 +227,7 @@ class EvaluationService:
         return [m.payload for m in result.scalars().all()]
 
     async def add_memory(self, employee_id: str, memory: Dict) -> Memory:
-        """添加员工记忆"""
+        """添加员工记忆（不 commit，由调用方控制事务）"""
         existing = await self.session.execute(
             select(Memory).where(
                 Memory.employee_id == employee_id,
@@ -229,8 +246,7 @@ class EvaluationService:
                 payload=memory,
             )
             self.session.add(mem)
-        await self.session.commit()
-        await self.session.refresh(mem)
+        await self.session.flush()
         return mem
 
     async def query_company_kb(self, query: str, top_k: int = 5) -> List[Dict]:
@@ -251,6 +267,7 @@ class EvaluationService:
         ]
 
     async def create_kb_doc(self, data: Dict) -> CompanyKB:
+        """创建知识库文档（不 commit，由调用方控制事务）"""
         doc = CompanyKB(
             kb_id=data["kb_id"],
             title=data["title"],
@@ -258,8 +275,7 @@ class EvaluationService:
             metadata_=data.get("metadata", {}),
         )
         self.session.add(doc)
-        await self.session.commit()
-        await self.session.refresh(doc)
+        await self.session.flush()
         return doc
 
     async def get_team_analytics(self, team_members: List[str]) -> Dict:
