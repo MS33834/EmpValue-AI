@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import CompanyKB, DimensionScore, Evaluation, EvidenceRef, Feedback, Memory, RawInput, User
+from models.constants import EvaluationStatus
 
 
 class EvaluationService:
@@ -64,7 +65,7 @@ class EvaluationService:
             employee_view=evaluation_data["employee_view"],
             manager_view=evaluation_data["manager_view"],
             audit=evaluation_data["audit"],
-            status=evaluation_data.get("status", "ai_drafted"),
+            status=evaluation_data.get("status", EvaluationStatus.AI_DRAFTED),
         )
         self.session.add(evaluation)
 
@@ -110,11 +111,11 @@ class EvaluationService:
         old_status = evaluation.status
         evaluation.status = new_status
 
-        if new_status == "approved":
+        if new_status == EvaluationStatus.APPROVED:
             evaluation.approved_at = datetime.now(timezone.utc)
             if approver_id:
                 evaluation.approver_id = approver_id
-        elif old_status == "approved" and new_status != "approved":
+        elif old_status == EvaluationStatus.APPROVED and new_status != EvaluationStatus.APPROVED:
             # 离开 approved 状态时重置审批信息
             evaluation.approved_at = None
             evaluation.approver_id = None
@@ -140,9 +141,9 @@ class EvaluationService:
         evaluation.status = evaluation_data.get("status", evaluation.status)
 
         new_status = evaluation.status
-        if new_status == "approved":
+        if new_status == EvaluationStatus.APPROVED:
             evaluation.approved_at = datetime.now(timezone.utc)
-        elif old_status == "approved" and new_status != "approved":
+        elif old_status == EvaluationStatus.APPROVED and new_status != EvaluationStatus.APPROVED:
             evaluation.approved_at = None
             evaluation.approver_id = None
 

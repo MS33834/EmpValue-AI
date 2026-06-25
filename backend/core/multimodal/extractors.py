@@ -18,6 +18,8 @@ def _get_attachment_payload(att: Dict[str, Any]) -> Optional[bytes]:
     import base64
     import os
 
+    from core.config import get_settings
+
     # base64 内联数据
     data = att.get("data")
     if data:
@@ -30,15 +32,21 @@ def _get_attachment_payload(att: Dict[str, Any]) -> Optional[bytes]:
             logger.warning("附件 base64 解码失败: %s", e)
             return None
 
-    # 本地路径
+    # 本地路径（防止路径遍历：仅允许在 attachment_dir 白名单目录内读取）
     path = att.get("path")
-    if path and os.path.exists(path):
-        try:
-            with open(path, "rb") as f:
-                return f.read()
-        except Exception as e:
-            logger.warning("附件文件读取失败 %s: %s", path, e)
+    if path:
+        allowed_dir = os.path.realpath(get_settings().attachment_dir)
+        real_path = os.path.realpath(path)
+        if not real_path.startswith(allowed_dir + os.sep):
+            logger.warning("附件路径越权访问被拒绝: %s (允许目录: %s)", path, allowed_dir)
             return None
+        if os.path.exists(real_path):
+            try:
+                with open(real_path, "rb") as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning("附件文件读取失败 %s: %s", real_path, e)
+                return None
 
     # URL（仅记录，不在抽取器内下载，避免阻塞；由上层预处理）
     url = att.get("url")

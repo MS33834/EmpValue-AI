@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.database import Base
+from models.constants import EvaluationStatus
 
 
 def now_utc() -> datetime:
@@ -97,7 +98,7 @@ class Evaluation(Base):
             name="ck_evaluation_score_range",
         ),
         CheckConstraint(
-            "status IN ('ai_drafted', 'manager_review', 'hr_audit', 'approved', 'rejected')",
+            f"status IN ({', '.join(repr(s) for s in EvaluationStatus.values())})",
             name="ck_evaluation_status_valid",
         ),
         Index("ix_eval_employee_status", "employee_id", "status"),

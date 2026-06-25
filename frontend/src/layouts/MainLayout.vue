@@ -36,11 +36,14 @@
           </el-menu-item>
         </template>
 
-        <template v-if="auth.role === 'manager' || auth.role === 'hr' || auth.role === 'admin'">
+        <template v-if="auth.role === 'manager' || auth.role === 'admin'">
           <el-menu-item index="/manager">
             <el-icon><UserFilled /></el-icon>
             <span>团队诊断</span>
           </el-menu-item>
+        </template>
+
+        <template v-if="auth.role === 'manager' || auth.role === 'hr' || auth.role === 'admin'">
           <el-menu-item index="/manager/team">
             <el-icon><DataAnalysis /></el-icon>
             <span>团队分析</span>

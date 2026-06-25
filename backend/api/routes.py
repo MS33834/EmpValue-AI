@@ -20,6 +20,7 @@ from api.deps import (
 from auth.rbac import Role, can_access, get_client_ip, get_current_user_id, require_role
 from core.database import get_db
 from core.tracing import tracer
+from models.constants import EvaluationStatus
 from services.approval_service import ApprovalService
 from services.audit_service import AuditService
 from services.evaluation_service import EvaluationService
@@ -86,6 +87,19 @@ async def _run_evaluation_job(
                 evaluation = result.get("parsed_evaluation")
                 if evaluation:
                     await eval_service.create_evaluation(evaluation)
+                    # 高风险自动路由：通过状态机将 ai_drafted → hr_audit
+                    routing = result.get("status")
+                    if routing == EvaluationStatus.HR_AUDIT:
+                        approval_service = ApprovalService(session)
+                        await approval_service.transition(
+                            evaluation_id=evaluation["evaluation_id"],
+                            current_status=EvaluationStatus.AI_DRAFTED,
+                            action="request_hr_review",
+                            actor_id="system",
+                            actor_role="system",
+                            comment="自动路由：高风险评估（低分或关键风险标记）",
+                        )
+                        evaluation["status"] = EvaluationStatus.HR_AUDIT
                     memory_payload = {
                         "period": period,
                         "summary": evaluation.get("employee_view", {}).get("summary", ""),
@@ -594,7 +608,7 @@ async def get_pending_approvals(
 ):
     """主管待审批列表（包含 ai_drafted 与 manager_review）"""
     pending = []
-    for status in ("ai_drafted", "manager_review"):
+    for status in (EvaluationStatus.AI_DRAFTED, EvaluationStatus.MANAGER_REVIEW):
         pending.extend(await eval_service.list_evaluations(status=status, limit=200))
     return {
         "pending": [
@@ -618,9 +632,9 @@ async def get_manager_dashboard(
 ):
     """主管工作台概览"""
     pending = []
-    for status in ("ai_drafted", "manager_review"):
+    for status in (EvaluationStatus.AI_DRAFTED, EvaluationStatus.MANAGER_REVIEW):
         pending.extend(await eval_service.list_evaluations(status=status, limit=200))
-    approved = await eval_service.list_evaluations(status="approved", limit=10)
+    approved = await eval_service.list_evaluations(status=EvaluationStatus.APPROVED, limit=10)
     return {
         "pending_count": len(pending),
         "pending": [
@@ -652,7 +666,7 @@ async def get_hr_audit_queue(
     role: Role = Depends(require_role(Role.HR, Role.ADMIN)),
 ):
     """HR 复核队列"""
-    audits = await eval_service.list_evaluations(status="hr_audit", limit=200)
+    audits = await eval_service.list_evaluations(status=EvaluationStatus.HR_AUDIT, limit=200)
     return {
         "pending": [
             {
@@ -731,7 +745,7 @@ async def appeal_evaluation(
     actor_id = get_current_user_id(request)
     comment = payload.get("comment")
 
-    if current_status not in ("approved", "rejected"):
+    if current_status not in (EvaluationStatus.APPROVED, EvaluationStatus.REJECTED):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="只有 approved 或 rejected 状态的评估可以申诉",
@@ -819,6 +833,21 @@ async def re_evaluate(
     # 覆盖旧 evaluation_id，保留历史审计
     new_eval["evaluation_id"] = evaluation_id
     await eval_service.update_evaluation(evaluation_id=evaluation_id, evaluation_data=new_eval)
+
+    # 高风险自动路由：通过状态机将 ai_drafted → hr_audit
+    routing = result.get("status")
+    if routing == EvaluationStatus.HR_AUDIT:
+        approval_service = ApprovalService(session)
+        await approval_service.transition(
+            evaluation_id=evaluation_id,
+            current_status=EvaluationStatus.AI_DRAFTED,
+            action="request_hr_review",
+            actor_id="system",
+            actor_role="system",
+            comment="重新评估自动路由：高风险评估（低分或关键风险标记）",
+        )
+        new_eval["status"] = EvaluationStatus.HR_AUDIT
+
     await audit_service.log(
         actor_id=get_current_user_id(request),
         action="re_evaluate",
@@ -846,7 +875,7 @@ async def get_employee_dashboard(
     if role == Role.EMPLOYEE:
         employee_id = get_current_user_id(request)
     evaluations = await eval_service.list_evaluations(
-        employee_id=employee_id, status="approved", limit=10
+        employee_id=employee_id, status=EvaluationStatus.APPROVED, limit=10
     )
     latest = evaluations[0] if evaluations else None
     return {
@@ -888,7 +917,7 @@ async def get_employee_history(
     if role == Role.EMPLOYEE:
         employee_id = get_current_user_id(request)
     evaluations = await eval_service.list_evaluations(
-        employee_id=employee_id, status="approved", limit=50
+        employee_id=employee_id, status=EvaluationStatus.APPROVED, limit=50
     )
     return {
         "employee_id": employee_id,
@@ -961,7 +990,10 @@ async def get_model_status(
 @router.post("/admin/model-switch")
 async def switch_model_tier(
     payload: Dict[str, Any],
+    request: Request,
     app_state: AppState = Depends(get_app_state),
+    audit_service: AuditService = Depends(get_audit_service),
+    session: AsyncSession = Depends(get_db),
     role: Role = Depends(require_role(Role.ADMIN)),
 ):
     """手动切换模型档位"""
@@ -972,7 +1004,16 @@ async def switch_model_tier(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"tier 必须是其中之一: {valid_tiers}",
         )
+    old_tier = app_state.settings.model_tier
+    reason = payload.get("reason")
     app_state.settings.model_tier = tier
+    await audit_service.log(
+        actor_id=get_current_user_id(request),
+        action="switch_model_tier",
+        details={"from_tier": old_tier, "to_tier": tier, "reason": reason},
+        ip_address=get_client_ip(request),
+    )
+    await session.commit()
     return {"tier": tier, "recommended": app_state.model_router.get_recommended_tier()}
 
 
@@ -1200,7 +1241,7 @@ async def resume_interrupt(
     meta["evaluation"] = parsed
 
     # 持久化评估结果到数据库
-    if parsed and final_status in ("approved", "rejected"):
+    if parsed and final_status in (EvaluationStatus.APPROVED, EvaluationStatus.REJECTED):
         try:
             await eval_service.create_evaluation(parsed)
             await audit_service.log(

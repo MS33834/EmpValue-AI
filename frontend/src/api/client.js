@@ -98,7 +98,7 @@ export const evaluationApi = {
 export const managerApi = {
   pendingApprovals: () => api.get('/manager/pending-approvals'),
   dashboard: () => api.get('/manager/dashboard'),
-  teamAnalytics: (members) => api.post('/teams/team-1/analytics', { members }),
+  teamAnalytics: (teamId, members) => api.post(`/teams/${teamId}/analytics`, { members }),
 }
 
 export const hrApi = {

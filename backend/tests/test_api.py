@@ -309,7 +309,8 @@ def test_re_evaluate(client, mock_app_state, created_evaluation_id):
     assert resp.status_code == 200
     data = resp.json()
     assert data["evaluation_id"] == created_evaluation_id
-    assert data["status"] in ("manager_review", "hr_audit")
+    # 重新评估后状态重置为 ai_drafted（高风险时自动路由到 hr_audit）
+    assert data["status"] in ("ai_drafted", "hr_audit")
 
 
 def test_get_employee_dashboard(client, mock_app_state, created_evaluation_id):
@@ -661,7 +662,7 @@ def test_re_evaluate_persists_to_db(client, mock_app_state, created_evaluation_i
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] in ("manager_review", "hr_audit")
+    assert data["status"] in ("ai_drafted", "manager_review", "hr_audit")
     assert data["status"] != "approved"
 
 

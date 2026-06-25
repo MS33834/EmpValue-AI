@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # 向量库配置
     vector_store_dir: str = "./chroma_db"
 
+    # 附件存储目录（路径遍历防护白名单根目录）
+    attachment_dir: str = "./attachments"
+
     # 默认推理参数
     temperature: float = 0.1
     max_tokens: int = 4096

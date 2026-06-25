@@ -2,6 +2,7 @@
 SQLAlchemy 数据模型
 """
 
+from models.constants import EvaluationStatus
 from models.models import (
     ApprovalAction,
     AuditLog,
@@ -28,4 +29,5 @@ __all__ = [
     "EvaluationPeriod",
     "DimensionScore",
     "EvidenceRef",
+    "EvaluationStatus",
 ]

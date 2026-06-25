@@ -71,6 +71,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { managerApi } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { BarChart } from 'echarts/charts'
@@ -82,6 +83,7 @@ use([BarChart, TitleComponent, TooltipComponent, GridComponent, CanvasRenderer])
 const loading = ref(false)
 const membersInput = ref('E1001,E1002,E1003')
 const analytics = ref({})
+const auth = useAuthStore()
 
 const members = computed(() => analytics.value.members || [])
 const hasData = computed(() => members.value.length > 0)
@@ -123,7 +125,7 @@ async function loadData() {
   }
   loading.value = true
   try {
-    const data = await managerApi.teamAnalytics(memberList)
+    const data = await managerApi.teamAnalytics(auth.userId || 'default', memberList)
     analytics.value = data
     if (!data.members || data.members.length === 0) {
       ElMessage.info('未查询到团队成员的评估数据')

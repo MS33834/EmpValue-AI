@@ -12,17 +12,30 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import ApprovalAction
+from models.constants import EvaluationStatus
 
 
 class ApprovalService:
     """审批服务（数据库实现）"""
 
     VALID_TRANSITIONS = {
-        "ai_drafted": {"approve": "approved", "reject": "rejected", "request_hr_review": "hr_audit"},
-        "manager_review": {"approve": "approved", "reject": "rejected", "request_hr_review": "hr_audit"},
-        "hr_audit": {"approve": "approved", "reject": "rejected", "request_manager_review": "manager_review"},
-        "approved": {"appeal": "manager_review"},
-        "rejected": {"appeal": "manager_review"},
+        EvaluationStatus.AI_DRAFTED: {
+            "approve": EvaluationStatus.APPROVED,
+            "reject": EvaluationStatus.REJECTED,
+            "request_hr_review": EvaluationStatus.HR_AUDIT,
+        },
+        EvaluationStatus.MANAGER_REVIEW: {
+            "approve": EvaluationStatus.APPROVED,
+            "reject": EvaluationStatus.REJECTED,
+            "request_hr_review": EvaluationStatus.HR_AUDIT,
+        },
+        EvaluationStatus.HR_AUDIT: {
+            "approve": EvaluationStatus.APPROVED,
+            "reject": EvaluationStatus.REJECTED,
+            "request_manager_review": EvaluationStatus.MANAGER_REVIEW,
+        },
+        EvaluationStatus.APPROVED: {"appeal": EvaluationStatus.MANAGER_REVIEW},
+        EvaluationStatus.REJECTED: {"appeal": EvaluationStatus.MANAGER_REVIEW},
     }
 
     def __init__(self, session: AsyncSession):

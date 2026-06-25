@@ -47,7 +47,7 @@ class InputGuard:
         self.max_input_length = max_input_length or self.MAX_INPUT_LENGTH
 
     def check(self, raw_inputs: List[Dict]) -> GuardResult:
-        """检查输入列表"""
+        """检查输入列表（文本内容 + 附件）"""
         triggered = []
 
         total_length = 0
@@ -62,14 +62,23 @@ class InputGuard:
                     triggered_rules=["input_size_limit"],
                 )
 
-            lowered = content.lower()
             for pattern in self.INJECTION_PATTERNS:
-                if re.search(pattern, lowered, re.IGNORECASE):
+                if re.search(pattern, content, re.IGNORECASE):
                     triggered.append(f"injection_pattern:{pattern}")
 
             for pattern in self.MALICIOUS_PATTERNS:
-                if re.search(pattern, lowered, re.IGNORECASE):
+                if re.search(pattern, content, re.IGNORECASE):
                     triggered.append(f"malicious_pattern:{pattern}")
+
+            # 校验附件类型与大小
+            for att in inp.get("attachments", []) or []:
+                att_result = self.check_attachment(
+                    filename=att.get("filename", ""),
+                    size=att.get("size", len(att.get("data", "")) if isinstance(att.get("data"), str) else 0),
+                    mime=att.get("mime", ""),
+                )
+                if not att_result.allowed:
+                    return att_result
 
         if triggered:
             return GuardResult(

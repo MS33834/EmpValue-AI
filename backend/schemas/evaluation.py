@@ -8,6 +8,8 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from models.constants import EvaluationStatus
+
 
 class DimensionScore(BaseModel):
     """单一维度得分，强制引用原始证据与改进动作。"""
@@ -155,13 +157,11 @@ class EmployeeEvaluation(BaseModel):
     manager_view: ManagerView
     audit: AuditInfo
     status: Literal[
-        "draft",
-        "ai_processing",
-        "ai_drafted",
-        "manager_review",
-        "hr_audit",
-        "approved",
-        "rejected",
+        EvaluationStatus.AI_DRAFTED,
+        EvaluationStatus.MANAGER_REVIEW,
+        EvaluationStatus.HR_AUDIT,
+        EvaluationStatus.APPROVED,
+        EvaluationStatus.REJECTED,
     ] = Field(..., description="审批状态")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     approved_at: Optional[datetime] = Field(None, description="审批通过时间")

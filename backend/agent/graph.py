@@ -15,6 +15,7 @@ from core.guards import InputGuard, OutputGuard
 from core.model_router import ModelRouter
 from core.multimodal import MultimodalCleaner
 from core.providers.base import ChatMessage
+from models.constants import EvaluationStatus
 from schemas import EmployeeEvaluation
 
 from .prompt_loader import PromptLoader
@@ -108,6 +109,8 @@ def create_evaluation_graph(
 
     async def call_llm(state: EvaluationState) -> EvaluationState:
         """调用 LLM 生成评估"""
+        if state.get("error"):
+            return state
         start = time.time()
         try:
             provider, tier = await model_router.get_provider_with_fallback()
@@ -135,7 +138,7 @@ def create_evaluation_graph(
                 **state,
                 "llm_raw_output": completion.content,
                 "audit_info": audit_info,
-                "status": "ai_drafted",
+                "status": EvaluationStatus.AI_DRAFTED,
             }
         except Exception as e:
             return {**state, "error": f"LLM 调用失败: {e}", "status": "error"}
@@ -152,7 +155,7 @@ def create_evaluation_graph(
             data["evaluation_id"] = f"EV-{state['period']}-{state['employee_id']}-{uuid.uuid4().hex[:8]}"
             data["employee_id"] = state["employee_id"]
             data["period"] = state["period"]
-            data.setdefault("status", "ai_drafted")
+            data.setdefault("status", EvaluationStatus.AI_DRAFTED)
 
             # 合并审计信息
             audit = data.get("audit", {})
@@ -169,27 +172,40 @@ def create_evaluation_graph(
             # 输出护栏：脱敏与敏感词检查
             emp_view = data.get("employee_view", {})
             mgr_view = data.get("manager_view", {})
-            output_guard.sanitize_employee_view(emp_view)
-            output_guard.sanitize_manager_view(mgr_view)
+            emp_result = output_guard.sanitize_employee_view(emp_view)
+            mgr_result = output_guard.sanitize_manager_view(mgr_view)
+
+            # 记录护栏违规（不阻断流程，但写入审计信息供追溯）
+            guard_violations = emp_result.violations + mgr_result.violations
+            if guard_violations:
+                logger.warning("输出护栏检测到违规: %s", guard_violations)
+                audit["output_guard_violations"] = guard_violations
+            redacted = emp_result.redacted_entities + mgr_result.redacted_entities
+            if redacted:
+                audit["redacted_entities"] = redacted
 
             evaluation = EmployeeEvaluation.model_validate(data)
             return {
                 **state,
                 "parsed_evaluation": evaluation.model_dump(mode="json"),
-                "status": "ai_drafted",
+                "status": EvaluationStatus.AI_DRAFTED,
             }
         except (json.JSONDecodeError, ValidationError) as e:
             return {**state, "error": f"输出解析失败: {e}", "status": "error"}
 
-    async def manager_review_gate(state: EvaluationState) -> Literal["hr_audit", "manager_review", "rejected"]:
+    async def manager_review_gate(state: EvaluationState) -> Literal["hr_audit", "manager_review", "error"]:
         """
         评估生成完成后的自动路由：
         - 高风险或低分自动进入 HR 复核
         - 其余进入主管待审批
         实际审批动作由 API 层驱动状态机完成
+
+        注意：此路由仅设置 state["status"] 作为路由标记，
+        不修改 parsed_evaluation["status"]，评估统一以 ai_drafted 入库，
+        由 API 层根据路由标记驱动状态机转换。
         """
         if state.get("error"):
-            return "rejected"
+            return "error"
         parsed = state.get("parsed_evaluation")
         if parsed:
             score = parsed.get("overall_score", 100)
@@ -200,16 +216,12 @@ def create_evaluation_graph(
         return "manager_review"
 
     async def manager_review(state: EvaluationState) -> EvaluationState:
-        """主管审批中断点：等待主管操作"""
-        parsed = state.get("parsed_evaluation") or {}
-        parsed["status"] = "manager_review"
-        return {**state, "status": "manager_review", "parsed_evaluation": parsed}
+        """主管审批路由标记：评估等待主管审批。不修改 parsed_evaluation.status，保持 ai_drafted 入库。"""
+        return {**state, "status": EvaluationStatus.MANAGER_REVIEW}
 
     async def hr_audit(state: EvaluationState) -> EvaluationState:
-        """HR 复核节点"""
-        parsed = state.get("parsed_evaluation") or {}
-        parsed["status"] = "hr_audit"
-        return {**state, "status": "hr_audit", "parsed_evaluation": parsed}
+        """HR 复核路由标记：高风险评估等待 HR 复核。不修改 parsed_evaluation.status，保持 ai_drafted 入库。"""
+        return {**state, "status": EvaluationStatus.HR_AUDIT}
 
     async def finalize(state: EvaluationState) -> EvaluationState:
         """最终状态节点：保留上游设置的状态"""
@@ -239,7 +251,7 @@ def create_evaluation_graph(
         {
             "hr_audit": "hr_audit",
             "manager_review": "manager_review",
-            "rejected": END,
+            "error": END,
         },
     )
     builder.add_edge("manager_review", "finalize")
@@ -348,7 +360,7 @@ def create_evaluation_graph_with_interrupt(
                 **state,
                 "llm_raw_output": completion.content,
                 "audit_info": audit_info,
-                "status": "ai_drafted",
+                "status": EvaluationStatus.AI_DRAFTED,
             }
         except Exception as e:
             return {**state, "error": f"LLM 调用失败: {e}", "status": "error"}
@@ -362,7 +374,7 @@ def create_evaluation_graph_with_interrupt(
             data["evaluation_id"] = f"EV-{state['period']}-{state['employee_id']}-{uuid.uuid4().hex[:8]}"
             data["employee_id"] = state["employee_id"]
             data["period"] = state["period"]
-            data.setdefault("status", "ai_drafted")
+            data.setdefault("status", EvaluationStatus.AI_DRAFTED)
             audit = data.get("audit", {})
             if state.get("audit_info"):
                 audit.update(state["audit_info"])
@@ -380,7 +392,7 @@ def create_evaluation_graph_with_interrupt(
             return {
                 **state,
                 "parsed_evaluation": evaluation.model_dump(mode="json"),
-                "status": "ai_drafted",
+                "status": EvaluationStatus.AI_DRAFTED,
             }
         except (json.JSONDecodeError, ValidationError) as e:
             return {**state, "error": f"输出解析失败: {e}", "status": "error"}
