@@ -65,6 +65,42 @@ uvicorn main:app --reload --port 8000
 
 ---
 
+## 数据库迁移
+
+项目使用 [Alembic](https://alembic.sqlalchemy.org/) 管理数据库结构迁移。
+
+### 常用命令
+
+```bash
+# 查看当前版本
+alembic current
+
+# 查看迁移历史
+alembic history
+
+# 升级到最新版本
+alembic upgrade head
+
+# 回退一个版本
+alembic downgrade -1
+
+# 根据模型变更自动生成迁移脚本
+alembic revision --autogenerate -m "描述本次变更"
+```
+
+也可以使用封装脚本：
+
+```bash
+python scripts/migrate.py upgrade
+python scripts/migrate.py current
+python scripts/migrate.py history
+python scripts/migrate.py revision -m "描述本次变更" --autogenerate
+```
+
+数据库连接串从 `core.config.get_settings().database_url` 读取，可通过环境变量 `DATABASE_URL` 覆盖。
+
+---
+
 ## 主要 API 概览
 
 ### 认证

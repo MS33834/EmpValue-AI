@@ -31,10 +31,16 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     cancelFlag = false
     const interval = 2000
     const maxAttempts = 60
+    const maxTotalTimeout = 5 * 60 * 1000
+    const startTime = Date.now()
     let consecutiveFailures = 0
+
     for (let i = 0; i < maxAttempts; i++) {
       if (cancelFlag) {
         throw new Error('评估任务已取消')
+      }
+      if (Date.now() - startTime > maxTotalTimeout) {
+        throw new Error('评估任务超时，请稍后刷新页面查看结果')
       }
       let job
       try {
@@ -61,6 +67,10 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     throw new Error('评估任务超时，请稍后刷新页面查看结果')
   }
 
+  function cancelEvaluation() {
+    cancelPolling()
+  }
+
   async function approveEvaluation(id, payload) {
     return evaluationApi.approve(id, payload)
   }
@@ -79,6 +89,7 @@ export const useEvaluationStore = defineStore('evaluation', () => {
     error,
     createEvaluation,
     pollJob,
+    cancelEvaluation,
     approveEvaluation,
     rejectEvaluation,
     fetchAuditLogs,

@@ -5,12 +5,12 @@
         <span>录入本周工作数据</span>
       </template>
 
-      <el-form label-position="top" :model="form">
-        <el-form-item label="评估周期">
+      <el-form ref="formRef" label-position="top" :model="form" :rules="rules">
+        <el-form-item label="评估周期" prop="period">
           <el-input v-model="form.period" placeholder="例如：2026-W25" />
         </el-form-item>
 
-        <el-form-item label="日报内容">
+        <el-form-item label="日报内容" prop="content">
           <el-input
             v-model="form.content"
             type="textarea"
@@ -29,7 +29,12 @@
         </el-form-item>
 
         <el-form-item>
-          <el-button type="primary" :loading="evalStore.loading || polling" @click="submit">
+          <el-button
+            type="primary"
+            :loading="evalStore.loading || polling"
+            :disabled="!isFormValid"
+            @click="submit"
+          >
             提交并生成评估
           </el-button>
         </el-form-item>
@@ -50,7 +55,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onBeforeUnmount } from 'vue'
+import { reactive, ref, computed, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useEvaluationStore, cancelPolling } from '@/stores/evaluation'
@@ -60,10 +65,30 @@ const router = useRouter()
 const evalStore = useEvaluationStore()
 const auth = useAuthStore()
 
+const formRef = ref(null)
 const form = reactive({
   period: '2026-W25',
   content: '',
   tasks: '',
+})
+
+const rules = {
+  period: [
+    { required: true, message: '请输入评估周期', trigger: 'blur' },
+    {
+      pattern: /^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/,
+      message: '周期格式不正确，例如：2026-W25',
+      trigger: 'blur',
+    },
+  ],
+  content: [{ required: true, message: '请输入日报内容', trigger: 'blur' }],
+}
+
+const isFormValid = computed(() => {
+  return (
+    /^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/.test(form.period.trim()) &&
+    form.content.trim().length > 0
+  )
 })
 
 const resultVisible = ref(false)
@@ -84,12 +109,9 @@ function genId() {
 }
 
 async function submit() {
-  if (!form.period.trim()) {
-    ElMessage.warning('请输入评估周期')
-    return
-  }
-  if (!form.content.trim()) {
-    ElMessage.warning('请输入日报内容')
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) {
+    ElMessage.warning('请检查表单填写是否正确')
     return
   }
   const rawInputs = [

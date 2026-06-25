@@ -4,6 +4,7 @@ FastAPI API 测试
 
 import tempfile
 from pathlib import Path
+from typing import Optional
 from unittest.mock import patch
 
 import pytest
@@ -124,6 +125,78 @@ def _wait_for_job(client, job_id: str, timeout: float = 10.0, headers=None) -> d
             return job
         time.sleep(0.2)
     raise TimeoutError(f"任务 {job_id} 未在 {timeout}s 内完成")
+
+
+def _fetch_evaluation(client, evaluation_id: str, role: str = "manager", user_id: Optional[str] = None) -> dict:
+    """通过 GET API 查询评估当前数据库状态"""
+    headers: dict = {}
+    if role:
+        headers["x-user-role"] = role
+    if user_id:
+        headers["x-user-id"] = user_id
+    resp = client.get(f"/api/v1/evaluations/{evaluation_id}", headers=headers)
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def _approve_evaluation(client, evaluation_id: str, actor_id: str = "M001") -> dict:
+    """审批通过辅助函数"""
+    resp = client.post(
+        f"/api/v1/evaluations/{evaluation_id}/approve",
+        json={"current_status": "ai_drafted", "actor_id": actor_id, "comment": "同意"},
+        headers={"x-user-role": "manager", "x-user-id": actor_id},
+    )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def _reject_evaluation(client, evaluation_id: str, actor_id: str = "M001") -> dict:
+    """驳回评估辅助函数"""
+    resp = client.post(
+        f"/api/v1/evaluations/{evaluation_id}/reject",
+        json={"current_status": "ai_drafted", "actor_id": actor_id, "comment": "证据不足"},
+        headers={"x-user-role": "manager", "x-user-id": actor_id},
+    )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def _appeal_evaluation(client, evaluation_id: str, actor_id: str = "E1001") -> dict:
+    """申诉评估辅助函数"""
+    resp = client.post(
+        f"/api/v1/evaluations/{evaluation_id}/appeal",
+        json={"current_status": "approved", "actor_id": actor_id, "comment": "对评分有异议"},
+        headers={"x-user-id": actor_id},
+    )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def _build_mock_app_state_for_response(client, test_settings, response: dict):
+    """构造使用指定 LLM response 的 AppState，用于高风险路由等场景"""
+    settings = Settings(model_tier="L0")
+    settings.vector_store_dir = test_settings
+    state = AppState(settings)
+
+    prompt_dir = state.prompt_loader.prompts_dir
+    state.memory_store = DummyMemoryStore()
+    state.company_kb = DummyCompanyKB()
+    mock_toolkit = AgentToolkit(DummyMemoryStore(), DummyCompanyKB())
+    mock_router = MockModelRouter(response)
+    mock_prompt_loader = PromptLoader(prompt_dir)
+
+    state.get_graph = lambda eval_service: create_evaluation_graph(
+        toolkit=mock_toolkit,
+        model_router=mock_router,
+        prompt_loader=mock_prompt_loader,
+    )
+    state._interrupt_graph = create_evaluation_graph_with_interrupt(
+        toolkit=mock_toolkit,
+        model_router=mock_router,
+        prompt_loader=mock_prompt_loader,
+    )
+    client.app.state.app_state = state
+    return state
 
 
 def test_create_evaluation(client, mock_app_state):
@@ -311,6 +384,165 @@ def test_re_evaluate(client, mock_app_state, created_evaluation_id):
     assert data["evaluation_id"] == created_evaluation_id
     # 重新评估后状态重置为 ai_drafted（高风险时自动路由到 hr_audit）
     assert data["status"] in ("ai_drafted", "hr_audit")
+
+
+# ---------------- 审批流与高风险路由测试 ----------------
+
+
+def test_approve_ai_drafted_evaluation(client, mock_app_state, created_evaluation_id):
+    """1. 从 ai_drafted 审批通过 -> approved，并验证数据库状态"""
+    eval_before = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_before["status"] == "ai_drafted"
+
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/approve",
+        json={"current_status": "ai_drafted", "actor_id": "M001", "comment": "同意"},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+
+    eval_after = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_after["status"] == "approved"
+    assert eval_after["approver_id"] == "M001"
+    assert eval_after["approved_at"] is not None
+
+
+def test_approve_manager_review_evaluation(client, mock_app_state, created_evaluation_id):
+    """2. 从 manager_review 审批通过 -> approved，并验证数据库状态"""
+    _approve_evaluation(client, created_evaluation_id)
+    appeal_resp = _appeal_evaluation(client, created_evaluation_id)
+    assert appeal_resp["status"] == "manager_review"
+
+    eval_before = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_before["status"] == "manager_review"
+    assert eval_before["approved_at"] is None
+    assert eval_before["approver_id"] is None
+
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/approve",
+        json={"current_status": "manager_review", "actor_id": "M001", "comment": "复核通过"},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+
+    eval_after = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_after["status"] == "approved"
+    assert eval_after["approver_id"] == "M001"
+    assert eval_after["approved_at"] is not None
+
+
+def test_reject_evaluation(client, mock_app_state, created_evaluation_id):
+    """3. 驳回评估 -> rejected，并验证数据库状态"""
+    eval_before = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_before["status"] == "ai_drafted"
+
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/reject",
+        json={"current_status": "ai_drafted", "actor_id": "M001", "comment": "证据不足"},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "rejected"
+
+    eval_after = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_after["status"] == "rejected"
+    assert eval_after["approved_at"] is None
+    assert eval_after["approver_id"] is None
+
+
+def test_request_hr_review_from_manager_review(client, mock_app_state, created_evaluation_id):
+    """4. 从 manager_review 申请 HR 复核 -> hr_audit，并验证数据库状态"""
+    _approve_evaluation(client, created_evaluation_id)
+    appeal_resp = _appeal_evaluation(client, created_evaluation_id)
+    assert appeal_resp["status"] == "manager_review"
+
+    eval_before = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_before["status"] == "manager_review"
+
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/request-hr-review",
+        json={"current_status": "manager_review", "actor_id": "M001", "comment": "需HR复核"},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "hr_audit"
+
+    eval_after = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_after["status"] == "hr_audit"
+
+
+def test_appeal_rejected_evaluation(client, mock_app_state, created_evaluation_id):
+    """5. 对 rejected 评估申诉 -> manager_review，并验证数据库状态"""
+    _reject_evaluation(client, created_evaluation_id)
+
+    eval_before = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_before["status"] == "rejected"
+
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/appeal",
+        json={"current_status": "rejected", "actor_id": "E1001", "comment": "对评分有异议"},
+        headers={"x-user-id": "E1001"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "manager_review"
+
+    eval_after = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_after["status"] == "manager_review"
+    assert eval_after["approved_at"] is None
+    assert eval_after["approver_id"] is None
+
+
+def test_re_evaluate_rejected_evaluation(client, mock_app_state, created_evaluation_id):
+    """6. 对 rejected 评估带反馈重新评估 -> ai_drafted 或 hr_audit，并验证数据库状态"""
+    _reject_evaluation(client, created_evaluation_id)
+
+    eval_before = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_before["status"] == "rejected"
+
+    resp = client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/re-evaluate",
+        json={"actor_id": "M001", "feedback": ["请重点关注代码质量"]},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["evaluation_id"] == created_evaluation_id
+    assert data["status"] in ("ai_drafted", "hr_audit")
+
+    eval_after = _fetch_evaluation(client, created_evaluation_id)
+    assert eval_after["status"] in ("ai_drafted", "hr_audit")
+    assert eval_after["status"] != "rejected"
+
+
+def test_high_risk_evaluation_auto_routing(client, test_settings):
+    """7. 高风险评估（低分或关键风险标记）自动路由到 hr_audit，并验证数据库状态"""
+    response = build_sample_llm_response()
+    response["overall_score"] = 55.0
+    response["manager_view"]["risk_flags"] = [
+        {"level": "critical", "category": "产出", "description": "关键产出未达标", "suggested_action": "主管复核"}
+    ]
+    _build_mock_app_state_for_response(client, test_settings, response)
+
+    payload = {
+        "employee_id": "E1001",
+        "period": "2026-W26",
+        "raw_inputs": [{"input_id": "daily-hr-001", "content": "本周产出严重不足"}],
+    }
+    resp = client.post("/api/v1/evaluations", json=payload, headers={"x-user-id": "E1001"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "pending"
+
+    job = _wait_for_job(client, data["job_id"], headers={"x-user-id": "E1001"})
+    assert job["status"] == "completed"
+    evaluation_id = job["evaluation"]["evaluation_id"]
+
+    # 验证异步任务结果与数据库状态均为 hr_audit
+    assert job["evaluation"]["status"] == "hr_audit"
+    eval_data = _fetch_evaluation(client, evaluation_id, role="hr")
+    assert eval_data["status"] == "hr_audit"
 
 
 def test_get_employee_dashboard(client, mock_app_state, created_evaluation_id):

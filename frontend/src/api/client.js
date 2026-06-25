@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 
 const api = axios.create({
@@ -28,8 +29,12 @@ api.interceptors.request.use((config) => {
 
 let isRefreshing = false
 let refreshPromise = null
+let hasRedirected = false
 
 function redirectToLogin() {
+  if (hasRedirected) return
+  hasRedirected = true
+  ElMessage.error('登录已过期，请重新登录')
   useAuthStore().logout()
   window.location.href = '/login'
 }
@@ -42,6 +47,9 @@ api.interceptors.response.use(
     const isRefreshReq = originalRequest?.url?.includes('/auth/refresh')
 
     if (status === 401 && originalRequest && !originalRequest._retry && !isRefreshReq) {
+      if (hasRedirected) {
+        return Promise.reject(new Error('登录已过期，请重新登录'))
+      }
       const authStore = useAuthStore()
       if (!authStore.useJwt) {
         redirectToLogin()

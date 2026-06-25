@@ -86,6 +86,14 @@ function handleSelect(row) {
   form.content = ''
 }
 
+function formatError(err, defaultMessage) {
+  const isNetworkError = !err.response && err.request
+  if (isNetworkError) {
+    return '网络连接异常，请检查网络后重试'
+  }
+  return err.response?.data?.detail || err.message || defaultMessage
+}
+
 async function loadData() {
   loading.value = true
   try {
@@ -93,7 +101,7 @@ async function loadData() {
     evaluations.value = data.evaluations || []
   } catch (err) {
     console.error('加载评估列表失败:', err)
-    ElMessage.error('加载评估列表失败')
+    ElMessage.error(formatError(err, '加载评估列表失败'))
   } finally {
     loading.value = false
   }
@@ -120,7 +128,7 @@ async function submit() {
     }
     form.content = ''
   } catch (err) {
-    ElMessage.error(err.message)
+    ElMessage.error(formatError(err, '提交失败，请稍后重试'))
   } finally {
     submitting.value = false
   }
