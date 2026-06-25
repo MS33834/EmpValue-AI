@@ -119,6 +119,7 @@ router.beforeEach(async (to, from, next) => {
     return
   }
   if (!auth.isLoggedIn) {
+    authChecked = false
     next('/login')
     return
   }

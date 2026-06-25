@@ -335,6 +335,8 @@ def create_evaluation_graph_with_interrupt(
         return {**state, "prompt": prompt}
 
     async def call_llm(state: EvaluationState) -> EvaluationState:
+        if state.get("error"):
+            return state
         start = time.time()
         try:
             provider, tier = await model_router.get_provider_with_fallback()
@@ -386,8 +388,17 @@ def create_evaluation_graph_with_interrupt(
             data["audit"] = audit
             emp_view = data.get("employee_view", {})
             mgr_view = data.get("manager_view", {})
-            output_guard.sanitize_employee_view(emp_view)
-            output_guard.sanitize_manager_view(mgr_view)
+            emp_result = output_guard.sanitize_employee_view(emp_view)
+            mgr_result = output_guard.sanitize_manager_view(mgr_view)
+
+            guard_violations = emp_result.violations + mgr_result.violations
+            if guard_violations:
+                logger.warning("输出护栏检测到违规: %s", guard_violations)
+                audit["output_guard_violations"] = guard_violations
+            redacted = emp_result.redacted_entities + mgr_result.redacted_entities
+            if redacted:
+                audit["redacted_entities"] = redacted
+
             evaluation = EmployeeEvaluation.model_validate(data)
             return {
                 **state,

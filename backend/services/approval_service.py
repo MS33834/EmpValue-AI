@@ -11,7 +11,7 @@ from typing import List, Literal, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import ApprovalAction
+from models import ApprovalAction, Evaluation
 from models.constants import EvaluationStatus
 
 
@@ -45,20 +45,46 @@ class ApprovalService:
     def can_transition(current_status: str, action: str) -> bool:
         return action in ApprovalService.VALID_TRANSITIONS.get(current_status, {})
 
-    async def transition(
+    async def transition_status(
         self,
         evaluation_id: str,
-        current_status: str,
         action: Literal["approve", "reject", "request_hr_review", "request_manager_review", "appeal"],
         actor_id: str,
         actor_role: str,
         comment: Optional[str] = None,
-    ) -> str:
-        """执行状态转换，写入审批记录（不 commit，由调用方控制事务），返回新状态"""
+        approver_id: Optional[str] = None,
+    ) -> tuple[str, str]:
+        """
+        原子执行状态转换：使用 FOR UPDATE 查询 evaluation，校验当前状态合法性，
+        更新 evaluation 状态，并写入审批记录。返回 (old_status, new_status)。
+        不 commit，由调用方控制事务边界。
+        """
+        result = await self.session.execute(
+            select(Evaluation)
+            .where(Evaluation.evaluation_id == evaluation_id)
+            .with_for_update()
+        )
+        evaluation = result.scalar_one_or_none()
+        if not evaluation:
+            raise ValueError(f"评估不存在: {evaluation_id}")
+
+        current_status = evaluation.status
         if not self.can_transition(current_status, action):
             raise ValueError(f"非法状态转换: {current_status} -> {action}")
 
         new_status = self.VALID_TRANSITIONS[current_status][action]
+        evaluation.status = new_status
+
+        if new_status == EvaluationStatus.APPROVED:
+            evaluation.approved_at = datetime.now(timezone.utc)
+            if approver_id:
+                evaluation.approver_id = approver_id
+        elif current_status == EvaluationStatus.APPROVED and new_status != EvaluationStatus.APPROVED:
+            evaluation.approved_at = None
+            evaluation.approver_id = None
+        elif approver_id:
+            evaluation.approver_id = approver_id
+
         action_record = ApprovalAction(
             action_id=f"ACT-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{actor_id}-{uuid.uuid4().hex[:6]}",
             evaluation_id=evaluation_id,
@@ -68,7 +94,7 @@ class ApprovalService:
             comment=comment,
         )
         self.session.add(action_record)
-        return new_status
+        return current_status, new_status
 
     async def get_history(self, evaluation_id: str) -> List[ApprovalAction]:
         result = await self.session.execute(

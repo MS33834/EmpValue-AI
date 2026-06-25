@@ -98,6 +98,15 @@ class EvaluationService:
         )
         return result.scalar_one_or_none()
 
+    async def get_evaluation_for_update(self, evaluation_id: str) -> Optional[Evaluation]:
+        """带悲观锁的评估查询，用于状态转换等需要避免竞态的场景"""
+        result = await self.session.execute(
+            select(Evaluation)
+            .where(Evaluation.evaluation_id == evaluation_id)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     async def update_status(
         self,
         evaluation_id: str,

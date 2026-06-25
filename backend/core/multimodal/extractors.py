@@ -37,7 +37,7 @@ def _get_attachment_payload(att: Dict[str, Any]) -> Optional[bytes]:
     if path:
         allowed_dir = os.path.realpath(get_settings().attachment_dir)
         real_path = os.path.realpath(path)
-        if not real_path.startswith(allowed_dir + os.sep):
+        if os.path.commonpath([real_path, allowed_dir]) != allowed_dir:
             logger.warning("附件路径越权访问被拒绝: %s (允许目录: %s)", path, allowed_dir)
             return None
         if os.path.exists(real_path):

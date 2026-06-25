@@ -91,9 +91,8 @@ async def _run_evaluation_job(
                     routing = result.get("status")
                     if routing == EvaluationStatus.HR_AUDIT:
                         approval_service = ApprovalService(session)
-                        await approval_service.transition(
+                        await approval_service.transition_status(
                             evaluation_id=evaluation["evaluation_id"],
-                            current_status=EvaluationStatus.AI_DRAFTED,
                             action="request_hr_review",
                             actor_id="system",
                             actor_role="system",
@@ -445,17 +444,12 @@ async def approve_evaluation(
     comment = payload.get("comment")
 
     try:
-        new_status = await approval_service.transition(
+        current_status, new_status = await approval_service.transition_status(
             evaluation_id=evaluation_id,
-            current_status=current_status,
             action="approve",
             actor_id=actor_id,
             actor_role=role.value,
             comment=comment,
-        )
-        await eval_service.update_status(
-            evaluation_id=evaluation_id,
-            new_status=new_status,
             approver_id=actor_id,
         )
         await audit_service.log(
@@ -493,17 +487,12 @@ async def reject_evaluation(
     comment = payload.get("comment")
 
     try:
-        new_status = await approval_service.transition(
+        current_status, new_status = await approval_service.transition_status(
             evaluation_id=evaluation_id,
-            current_status=current_status,
             action="reject",
             actor_id=actor_id,
             actor_role=role.value,
             comment=comment,
-        )
-        await eval_service.update_status(
-            evaluation_id=evaluation_id,
-            new_status=new_status,
         )
         await audit_service.log(
             actor_id=actor_id,
@@ -702,15 +691,13 @@ async def request_hr_review(
     comment = payload.get("comment")
 
     try:
-        new_status = await approval_service.transition(
+        current_status, new_status = await approval_service.transition_status(
             evaluation_id=evaluation_id,
-            current_status=current_status,
             action="request_hr_review",
             actor_id=actor_id,
             actor_role=role.value,
             comment=comment,
         )
-        await eval_service.update_status(evaluation_id=evaluation_id, new_status=new_status)
         await audit_service.log(
             actor_id=actor_id,
             action="request_hr_review",
@@ -752,15 +739,13 @@ async def appeal_evaluation(
         )
 
     try:
-        new_status = await approval_service.transition(
+        current_status, new_status = await approval_service.transition_status(
             evaluation_id=evaluation_id,
-            current_status=current_status,
             action="appeal",
             actor_id=actor_id,
             actor_role=role.value,
             comment=comment,
         )
-        await eval_service.update_status(evaluation_id=evaluation_id, new_status=new_status)
         await audit_service.log(
             actor_id=actor_id,
             action="appeal_evaluation",
@@ -838,9 +823,8 @@ async def re_evaluate(
     routing = result.get("status")
     if routing == EvaluationStatus.HR_AUDIT:
         approval_service = ApprovalService(session)
-        await approval_service.transition(
+        await approval_service.transition_status(
             evaluation_id=evaluation_id,
-            current_status=EvaluationStatus.AI_DRAFTED,
             action="request_hr_review",
             actor_id="system",
             actor_role="system",
@@ -1237,10 +1221,8 @@ async def resume_interrupt(
     # 执行完成
     final_status = result.get("status", "completed")
     parsed = result.get("parsed_evaluation")
-    meta["status"] = final_status
-    meta["evaluation"] = parsed
 
-    # 持久化评估结果到数据库
+    # 持久化评估结果到数据库，成功后再更新内存中的线程状态，避免 DB 失败但内存已标记为完成
     if parsed and final_status in (EvaluationStatus.APPROVED, EvaluationStatus.REJECTED):
         try:
             await eval_service.create_evaluation(parsed)
@@ -1256,9 +1238,16 @@ async def resume_interrupt(
                 ip_address=get_client_ip(request),
             )
             await session.commit()
+            meta["status"] = final_status
+            meta["evaluation"] = parsed
         except Exception:
             logger.exception("interrupt 评估结果持久化失败")
             await session.rollback()
+            final_status = meta.get("status", "awaiting_review")
+    else:
+        # 非终态（理论上不应发生）也仅记录状态，不持久化评估
+        meta["status"] = final_status
+        meta["evaluation"] = parsed
 
     return {
         "thread_id": thread_id,
