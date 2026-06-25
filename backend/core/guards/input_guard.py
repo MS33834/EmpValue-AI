@@ -22,12 +22,12 @@ class InputGuard:
     # Prompt 注入常见特征词与模式
     INJECTION_PATTERNS = [
         r"忽略.{0,10}(提示|指令|prompt|instruction)",
-        r"ignore\s+(the\s+)?(prompt|instruction|above|previous)",
-        r"你是个?\s*.{0,20}(助手|AI|模型|model)",
-        r"you\s+are\s+(not\s+)?an?\s+\w+",
+        r"ignore\s+.{0,20}(prompt|instruction|above|previous|all)",
+        r"你.{0,8}是.{0,15}(助手|AI|模型|model|没有限制|无限制)",
+        r"you\s+are\s+.{0,20}(an?\s+\w+|not\s+|unrestricted|different)",
         r"系统提示",
         r"system\s+prompt",
-        r"不要.{0,10}(评估|打分|判断)",
+        r"不要.{0,10}(评估|打分|判断|遵守|遵循)",
         r"输出.{0,10}(代码|密码|密钥|key|token)",
         r"```\s*(system|yaml|json)",
     ]
