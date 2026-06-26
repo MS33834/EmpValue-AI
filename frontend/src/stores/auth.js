@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/client'
+import {
+  resetApiAuthState,
+  resetRouteAuthChecked,
+  isTokenExpired,
+  isDemoAuthEnabled,
+} from '@/utils/auth'
 
 function defaultUserId(role) {
   const map = {
@@ -20,6 +26,16 @@ export const useAuthStore = defineStore('auth', () => {
   // 是否使用 JWT 真实认证；false 表示演示模式（header 伪造角色）
   const useJwt = ref(!!token.value)
 
+  // 生产环境清理残留的演示模式本地数据
+  if (!token.value && !isDemoAuthEnabled()) {
+    localStorage.removeItem('empvalue_role')
+    localStorage.removeItem('empvalue_user_id')
+    localStorage.removeItem('empvalue_name')
+    role.value = ''
+    userId.value = ''
+    name.value = ''
+  }
+
   const isLoggedIn = computed(() => !!role.value)
 
   function loginWithToken(tokenValue, payload) {
@@ -32,9 +48,15 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('empvalue_role', payload.role)
     localStorage.setItem('empvalue_user_id', payload.user_id)
     localStorage.setItem('empvalue_name', name.value)
+    // 登录成功后重置认证流程状态，允许重新校验与跳转
+    resetApiAuthState()
+    resetRouteAuthChecked()
   }
 
   function loginDemo(selectedRole, id = null) {
+    if (!isDemoAuthEnabled()) {
+      return
+    }
     role.value = selectedRole
     userId.value = id || defaultUserId(selectedRole)
     name.value = ''
@@ -44,9 +66,11 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('empvalue_user_id', userId.value)
     localStorage.removeItem('empvalue_token')
     localStorage.removeItem('empvalue_name')
+    resetApiAuthState()
+    resetRouteAuthChecked()
   }
 
-  // 兼容旧调用：默认走演示模式
+  // 兼容旧调用：默认走演示模式（受 isDemoAuthEnabled 限制）
   function login(selectedRole, id = null) {
     loginDemo(selectedRole, id)
   }
@@ -61,10 +85,16 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('empvalue_user_id')
     localStorage.removeItem('empvalue_name')
     localStorage.removeItem('empvalue_token')
+    resetApiAuthState()
+    resetRouteAuthChecked()
   }
 
   async function checkAuth() {
     if (!useJwt.value) return true
+    if (isTokenExpired(token.value)) {
+      logout()
+      return false
+    }
     try {
       const data = await authApi.me()
       if (data) {

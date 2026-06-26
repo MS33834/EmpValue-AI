@@ -125,7 +125,11 @@ async function loadData() {
   }
   loading.value = true
   try {
-    const data = await managerApi.teamAnalytics(auth.userId || 'default', memberList)
+    if (!auth.userId) {
+      ElMessage.error('用户信息缺失，请重新登录')
+      return
+    }
+    const data = await managerApi.teamAnalytics(auth.userId, memberList)
     analytics.value = data
     if (!data.members || data.members.length === 0) {
       ElMessage.info('未查询到团队成员的评估数据')

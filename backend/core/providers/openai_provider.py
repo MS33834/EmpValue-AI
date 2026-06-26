@@ -26,8 +26,8 @@ class OpenAICompatibleProvider(BaseProvider):
         kwargs: Dict[str, str] = {}
         if config.base_url:
             kwargs["base_url"] = config.base_url
-        if config.api_key:
-            kwargs["api_key"] = config.api_key
+        # 允许无 key 初始化（本地模型/测试场景），实际调用时若仍未配置会失败
+        kwargs["api_key"] = config.api_key or "dummy-key"
         self.client = AsyncOpenAI(**kwargs)
 
     def name(self) -> str:

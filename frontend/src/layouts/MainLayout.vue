@@ -29,7 +29,7 @@
           </el-menu-item>
         </template>
 
-        <template v-if="auth.role === 'hr'">
+        <template v-if="auth.role === 'hr' || auth.role === 'admin'">
           <el-menu-item index="/hr">
             <el-icon><View /></el-icon>
             <span>HR复核</span>

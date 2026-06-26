@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { authFlowState, isTokenExpired, resetRouteAuthChecked } from '@/utils/auth'
 
 const routes = [
   {
@@ -65,7 +66,7 @@ const routes = [
     path: '/hr',
     name: 'HRLayout',
     component: () => import('@/layouts/MainLayout.vue'),
-    meta: { role: ['hr'] },
+    meta: { role: ['hr', 'admin'] },
     children: [
       {
         path: '',
@@ -110,7 +111,9 @@ const router = createRouter({
   routes,
 })
 
-let authChecked = false
+export function resetRouteAuthCheckedPublic() {
+  resetRouteAuthChecked()
+}
 
 router.beforeEach(async (to, from, next) => {
   const auth = useAuthStore()
@@ -119,12 +122,18 @@ router.beforeEach(async (to, from, next) => {
     return
   }
   if (!auth.isLoggedIn) {
-    authChecked = false
+    authFlowState.authChecked = false
     next('/login')
     return
   }
-  if (!authChecked) {
-    authChecked = true
+  // JWT 过期时主动清理并跳转登录
+  if (auth.useJwt && auth.token && isTokenExpired(auth.token)) {
+    auth.logout()
+    next('/login')
+    return
+  }
+  if (!authFlowState.authChecked) {
+    authFlowState.authChecked = true
     const ok = await auth.checkAuth()
     if (!ok) {
       next('/login')

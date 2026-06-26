@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { authFlowState, isTokenExpired, isDemoAuthEnabled } from '@/utils/auth'
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
@@ -10,13 +11,25 @@ const api = axios.create({
   },
 })
 
+const PUBLIC_URLS = ['/auth/login', '/auth/register', '/auth/seed-demo-users']
+
+function isPublicUrl(config) {
+  return PUBLIC_URLS.some((url) => config.url?.includes(url))
+}
+
 api.interceptors.request.use((config) => {
   const authStore = useAuthStore()
-  // JWT 模式：发送 Bearer token
-  if (authStore.useJwt && authStore.token) {
+  const isPublic = isPublicUrl(config)
+  // JWT 模式：发送 Bearer token（公共接口与刷新接口不附加/不检查过期）
+  if (authStore.useJwt && authStore.token && !isPublic) {
+    const isRefresh = config.url?.includes('/auth/refresh')
+    if (!isRefresh && isTokenExpired(authStore.token)) {
+      redirectToLogin()
+      return Promise.reject(new Error('登录已过期，请重新登录'))
+    }
     config.headers['Authorization'] = `Bearer ${authStore.token}`
-  } else {
-    // 演示模式：通过 header 传递角色与用户 ID
+  } else if (isDemoAuthEnabled() && !isPublic) {
+    // 演示模式：通过 header 传递角色与用户 ID（仅开发/显式开启时发送）
     if (authStore.role) {
       config.headers['x-user-role'] = authStore.role
     }
@@ -27,13 +40,9 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-let isRefreshing = false
-let refreshPromise = null
-let hasRedirected = false
-
 function redirectToLogin() {
-  if (hasRedirected) return
-  hasRedirected = true
+  if (authFlowState.hasRedirected) return
+  authFlowState.hasRedirected = true
   ElMessage.error('登录已过期，请重新登录')
   useAuthStore().logout()
   window.location.href = '/login'
@@ -47,7 +56,7 @@ api.interceptors.response.use(
     const isRefreshReq = originalRequest?.url?.includes('/auth/refresh')
 
     if (status === 401 && originalRequest && !originalRequest._retry && !isRefreshReq) {
-      if (hasRedirected) {
+      if (authFlowState.hasRedirected) {
         return Promise.reject(new Error('登录已过期，请重新登录'))
       }
       const authStore = useAuthStore()
@@ -57,14 +66,14 @@ api.interceptors.response.use(
       }
       originalRequest._retry = true
       try {
-        if (!isRefreshing) {
-          isRefreshing = true
-          refreshPromise = authApi.refresh().finally(() => {
-            isRefreshing = false
-            refreshPromise = null
+        if (!authFlowState.isRefreshing) {
+          authFlowState.isRefreshing = true
+          authFlowState.refreshPromise = authApi.refresh().finally(() => {
+            authFlowState.isRefreshing = false
+            authFlowState.refreshPromise = null
           })
         }
-        const data = await refreshPromise
+        const data = await authFlowState.refreshPromise
         const newToken = data?.token || data?.access_token
         if (newToken) {
           authStore.token = newToken

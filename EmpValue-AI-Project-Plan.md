@@ -322,41 +322,41 @@ class EmployeeEvaluation(BaseModel):
 
 ### Phase 1：Prompt 与 Schema 联调（2-3 周）
 
-- [ ] 完成 Pydantic Schema 与校验规则
-- [ ] 在 LM Studio 部署 Qwen2.5-7B 作为基准模型
-- [ ] 编写 System Prompt，重点调试双视角语气分离
-- [ ] 建立 50 条人工标注测试集，评估证据引用准确率
-- [ ] 输出：《Prompt 工程规范 v1.0》
+- [x] 完成 Pydantic Schema 与校验规则
+- [x] 在 LM Studio 部署 Qwen2.5-7B 作为基准模型
+- [x] 编写 System Prompt，重点调试双视角语气分离
+- [x] 建立 50 条人工标注测试集，评估证据引用准确率
+- [x] 输出：《Prompt 工程规范 v1.0》
 
 ### Phase 2：后端与 Agent 核心搭建（4-5 周）
 
-- [ ] 实现 ModelRouter 与 Provider 抽象层
-- [ ] 用 LangGraph 搭建带中断点的审批状态机
-- [ ] 定义并实现 Agent 的 Tools 接口
-- [ ] 接入 ChromaDB 长期记忆
-- [ ] 完成 RBAC、审批流、审计日志
-- [ ] API 单元测试覆盖率 ≥ 70%
+- [x] 实现 ModelRouter 与 Provider 抽象层
+- [x] 用 LangGraph 搭建带中断点的审批状态机
+- [x] 定义并实现 Agent 的 Tools 接口
+- [x] 接入 ChromaDB 长期记忆
+- [x] 完成 RBAC、审批流、审计日志
+- [ ] API 单元测试覆盖率 ≥ 70%（已建立测试集，待覆盖率基线确认）
 
 ### Phase 3：前端工程与数据闭环（3-4 周）
 
-- [ ] Vue3 搭建员工端、主管端、HR 端页面
-- [ ] 对接 FastAPI，跑通“录入 → AI 清洗 → 审批 → 入库”全流程
+- [x] Vue3 搭建员工端、主管端、HR 端页面
+- [x] 对接 FastAPI，跑通“录入 → AI 清洗 → 审批 → 入库”全流程
 - [ ] UI/UX 走查与可访问性检查
-- [ ] 前端端到端测试覆盖核心流程
+- [x] 前端端到端测试覆盖核心流程
 
 ### Phase 4：模拟数据、护栏与可观测性（2-3 周）
 
-- [ ] 生成 5 类典型员工画像 Mock 数据（劳模、摸鱼、明星、新人、瓶颈期）
-- [ ] 加入输入 Prompt 注入防护与输出 PII 脱敏
-- [ ] 集成 Langfuse 追踪 Agent 执行轨迹
-- [ ] 红队测试：Prompt 注入、越狱、偏见、幻觉
+- [x] 生成 5 类典型员工画像 Mock 数据（劳模、摸鱼、明星、新人、瓶颈期）
+- [x] 加入输入 Prompt 注入防护与输出 PII 脱敏
+- [x] 集成 Langfuse 追踪 Agent 执行轨迹
+- [x] 红队测试：Prompt 注入、越狱、偏见、幻觉
 
 ### Phase 5：试点部署与迭代（持续）
 
 - [ ] 选择 1-2 个团队进行内部试点
 - [ ] 收集主管与员工反馈
 - [ ] 建立反馈闭环，持续优化 Prompt
-- [ ] 输出：《企业部署手册》《安全合规白皮书》
+- [x] 输出：《企业部署手册》《安全合规白皮书》
 
 ---
 

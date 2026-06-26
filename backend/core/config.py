@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # 本地 LM Studio / Ollama 配置（OpenAI 兼容接口）
     local_base_url: str = "http://localhost:1234/v1"
-    local_api_key: Optional[str] = "lm-studio"
+    local_api_key: Optional[str] = None
     local_model_l1: str = "qwen2.5-0.5b-instruct"
     local_model_l2: str = "qwen2.5-7b-instruct"
     local_model_l3: str = "qwen2.5-14b-instruct"
@@ -65,8 +65,8 @@ class Settings(BaseSettings):
     langfuse_secret_key: Optional[str] = None
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    # JWT 认证配置
-    jwt_secret_key: str = "empvalue-ai-dev-secret-change-in-production"
+    # JWT 认证配置：生产环境必须通过环境变量设置强随机密钥
+    jwt_secret_key: Optional[str] = None
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 小时
     # 演示模式：开启时允许通过 x-user-role / x-user-id header 伪造身份（仅开发/测试用）

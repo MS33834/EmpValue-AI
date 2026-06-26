@@ -101,6 +101,7 @@ uvicorn main:app --reload --port 8000
 
 ```bash
 cd frontend
+cp .env.example .env
 npm install
 npm run dev
 ```
@@ -157,6 +158,7 @@ python -m pytest tests/e2e -q
 - [安全合规白皮书](docs/security-compliance-whitepaper.md)
 - [后端开发说明](backend/README.md)
 - [前端开发说明](frontend/README.md)
+- [API 文档](backend/docs/openapi.json)（FastAPI 自动生成的 OpenAPI 规范）
 
 ---
 

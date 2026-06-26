@@ -122,6 +122,17 @@ class LangfuseTracer:
         )
         return gen
 
+    def close(self) -> None:
+        """刷新并关闭 Langfuse 客户端"""
+        if self._enabled and self._client:
+            try:
+                self._client.flush()
+                self._client.shutdown()
+            except Exception as e:
+                logger.warning(f"Langfuse 客户端关闭失败: {e}")
+        self._enabled = False
+        self._client = None
+
 
 # 全局单例
 tracer = LangfuseTracer()

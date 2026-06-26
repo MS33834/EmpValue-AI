@@ -30,10 +30,10 @@
                 <el-button size="small" type="primary" @click="viewDetail(row)">
                   查看详情
                 </el-button>
-                <el-button size="small" type="success" @click="approve(row)">
+                <el-button size="small" type="success" :loading="submitting" @click="approve(row)">
                   通过
                 </el-button>
-                <el-button size="small" type="danger" @click="reject(row)">
+                <el-button size="small" type="danger" :loading="submitting" @click="reject(row)">
                   驳回
                 </el-button>
               </template>
@@ -53,6 +53,7 @@ import { hrApi, evaluationApi } from '@/api/client'
 
 const router = useRouter()
 const loading = ref(false)
+const submitting = ref(false)
 const evaluations = ref([])
 
 async function loadData() {
@@ -79,12 +80,15 @@ async function approve(row) {
       cancelButtonText: '取消',
       inputType: 'textarea',
     })
+    submitting.value = true
     await evaluationApi.approve(row.evaluation_id, { comment: value })
     ElMessage.success('已通过复核')
     await loadData()
   } catch (err) {
     if (err === 'cancel' || err?.message === 'cancel') return
     ElMessage.error(err.message || '操作失败')
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -95,12 +99,15 @@ async function reject(row) {
       cancelButtonText: '取消',
       inputType: 'textarea',
     })
+    submitting.value = true
     await evaluationApi.reject(row.evaluation_id, { comment: value })
     ElMessage.success('已驳回')
     await loadData()
   } catch (err) {
     if (err === 'cancel' || err?.message === 'cancel') return
     ElMessage.error(err.message || '操作失败')
+  } finally {
+    submitting.value = false
   }
 }
 

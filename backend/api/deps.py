@@ -2,6 +2,8 @@
 FastAPI 依赖注入
 """
 
+import asyncio
+
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,11 +25,21 @@ class AppState:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._settings_lock = asyncio.Lock()
         self.model_router = ModelRouter(settings)
         self.prompt_loader = PromptLoader()
         self.memory_store = ChromaMemoryStore(settings=settings)
         self.company_kb = ChromaCompanyKB(settings=settings)
         self.multimodal_cleaner = MultimodalCleaner()
+
+    async def close(self) -> None:
+        """关闭应用级资源（向量库客户端、embedding 客户端等）"""
+        for store in (self.memory_store, self.company_kb):
+            try:
+                if hasattr(store, "close"):
+                    await store.close()
+            except Exception:
+                pass
 
     def get_graph(self, eval_service: EvaluationService):
         """创建并返回一个与当前数据库会话绑定的 LangGraph 实例"""

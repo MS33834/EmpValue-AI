@@ -141,6 +141,18 @@ class ChromaMemoryStore(MemoryStore):
             memories.append(memory)
         return memories
 
+    async def close(self) -> None:
+        """释放 ChromaDB 客户端与 embedding 客户端资源"""
+        try:
+            self.client.close()
+        except Exception:
+            logger.warning("ChromaMemoryStore client 关闭失败", exc_info=True)
+        if self.embedding and hasattr(self.embedding, "client"):
+            try:
+                await self.embedding.client.close()
+            except Exception:
+                logger.warning("ChromaMemoryStore embedding client 关闭失败", exc_info=True)
+
     async def add_memory(self, employee_id: str, memory: Dict[str, Any]) -> None:
         """添加/更新一条员工记忆，并写入真实向量"""
         period = memory.get("period", "unknown")
@@ -220,6 +232,18 @@ class ChromaCompanyKB(CompanyKB):
                 }
             )
         return docs
+
+    async def close(self) -> None:
+        """释放 ChromaDB 客户端与 embedding 客户端资源"""
+        try:
+            self.client.close()
+        except Exception:
+            logger.warning("ChromaCompanyKB client 关闭失败", exc_info=True)
+        if self.embedding and hasattr(self.embedding, "client"):
+            try:
+                await self.embedding.client.close()
+            except Exception:
+                logger.warning("ChromaCompanyKB embedding client 关闭失败", exc_info=True)
 
     async def add_document(
         self,

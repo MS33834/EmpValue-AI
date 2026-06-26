@@ -87,11 +87,8 @@ function handleSelect(row) {
 }
 
 function formatError(err, defaultMessage) {
-  const isNetworkError = !err.response && err.request
-  if (isNetworkError) {
-    return '网络连接异常，请检查网络后重试'
-  }
-  return err.response?.data?.detail || err.message || defaultMessage
+  // 错误已被 axios 拦截器统一封装为 Error，直接取 message 即可
+  return err?.message || defaultMessage
 }
 
 async function loadData() {

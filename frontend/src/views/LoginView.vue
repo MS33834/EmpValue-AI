@@ -45,7 +45,7 @@
           </el-form>
         </el-tab-pane>
 
-        <el-tab-pane label="演示模式" name="demo">
+        <el-tab-pane v-if="demoEnabled" label="演示模式" name="demo">
           <el-form label-position="top" class="login-form">
             <el-form-item label="选择角色（演示模式，无需密码）">
               <el-select v-model="selectedRole" placeholder="请选择角色" style="width: 100%">
@@ -71,11 +71,12 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/client'
+import { isDemoAuthEnabled } from '@/utils/auth'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -100,6 +101,7 @@ const jwtRules = {
 }
 
 const selectedRole = ref('employee')
+const demoEnabled = computed(() => isDemoAuthEnabled())
 
 const redirectMap = {
   employee: '/employee',
@@ -133,6 +135,10 @@ async function handleJwtLogin() {
 }
 
 function handleDemoLogin() {
+  if (!demoEnabled.value) {
+    ElMessage.error('演示模式未启用')
+    return
+  }
   auth.loginDemo(selectedRole.value)
   router.push(redirectMap[selectedRole.value] || '/employee')
 }

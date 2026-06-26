@@ -14,6 +14,15 @@ from core.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+def _ensure_secret_key(settings) -> str:
+    key = settings.jwt_secret_key
+    if not key:
+        raise RuntimeError(
+            "JWT_SECRET_KEY 未配置，请在环境变量中设置强随机密钥后再启动服务"
+        )
+    return key
+
+
 def create_access_token(
     user_id: str,
     role: str,
@@ -22,6 +31,7 @@ def create_access_token(
 ) -> str:
     """生成 JWT access token"""
     settings = get_settings()
+    secret_key = _ensure_secret_key(settings)
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=expires_minutes or settings.jwt_expire_minutes
     )
@@ -32,14 +42,15 @@ def create_access_token(
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, secret_key, algorithm=settings.jwt_algorithm)
 
 
 def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     """解码并校验 JWT，返回 payload 或 None"""
     settings = get_settings()
     try:
-        return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        secret_key = _ensure_secret_key(settings)
+        return jwt.decode(token, secret_key, algorithms=[settings.jwt_algorithm])
     except jwt.ExpiredSignatureError:
         logger.warning("JWT 已过期")
         return None

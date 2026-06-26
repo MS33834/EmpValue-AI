@@ -6,13 +6,15 @@ EmpValue-AI 评估输出 Schema
 from datetime import datetime, timezone
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from models.constants import EvaluationStatus
 
 
 class DimensionScore(BaseModel):
     """单一维度得分，强制引用原始证据与改进动作。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     dimension: str = Field(
         ...,
@@ -47,6 +49,8 @@ class DimensionScore(BaseModel):
 class EmployeeView(BaseModel):
     """员工可见的建设性视图：客观、正向、无主观负面措辞。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     summary: str = Field(
         ...,
         min_length=20,
@@ -74,6 +78,8 @@ class EmployeeView(BaseModel):
 class RiskFlag(BaseModel):
     """管理视图中的风险标记，用于主管快速识别问题。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     level: Literal["low", "medium", "high", "critical"] = Field(
         ...,
         description="风险等级",
@@ -94,6 +100,8 @@ class RiskFlag(BaseModel):
 
 class ManagerView(BaseModel):
     """管理/HR 可见的尖锐诊断视图：直接、战略、不含糖衣。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     harsh_assessment: str = Field(
         ...,
@@ -121,6 +129,8 @@ class ManagerView(BaseModel):
 class AuditInfo(BaseModel):
     """审计信息，保证可解释性与可追溯性。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     model_name: str = Field(..., description="实际使用的模型名称")
     model_tier: Literal["L0", "L1", "L2", "L3"] = Field(
         ..., description="模型档位"
@@ -143,6 +153,8 @@ class AuditInfo(BaseModel):
 
 class EmployeeEvaluation(BaseModel):
     """一次完整的员工评估结果。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     evaluation_id: str = Field(..., description="评估唯一 ID")
     employee_id: str = Field(..., description="员工唯一 ID")

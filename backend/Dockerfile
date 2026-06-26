@@ -4,7 +4,7 @@ WORKDIR /app
 
 # 安装 chromadb 等依赖可能需要的系统库
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libsqlite3-dev \
+    && apt-get install -y --no-install-recommends gcc libsqlite3-dev libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import (
@@ -29,6 +30,35 @@ from services.evaluation_service import EvaluationService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
+
+
+class CreateInputRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: str = Field(min_length=1, max_length=64)
+    period: str = Field(min_length=1, max_length=32)
+    type: str = Field(default="daily_report", max_length=64)
+    content: str = Field(min_length=1, max_length=10000)
+    attachments: List[Dict[str, Any]] = Field(default_factory=list, max_length=20)
+    input_id: Optional[str] = Field(default=None, max_length=128)
+
+
+class RawInputItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input_id: Optional[str] = Field(default=None, max_length=128)
+    type: str = Field(default="daily_report", max_length=64)
+    content: str = Field(min_length=1, max_length=10000)
+    attachments: List[Dict[str, Any]] = Field(default_factory=list, max_length=20)
+
+
+class CreateEvaluationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: str = Field(min_length=1, max_length=64)
+    period: str = Field(min_length=1, max_length=32)
+    raw_inputs: List[RawInputItem] = Field(default_factory=list, max_length=50)
+
 
 # 评估异步任务状态存储（生产环境应替换为 Redis / 数据库）
 job_store: Dict[str, Dict[str, Any]] = {}
@@ -138,12 +168,16 @@ async def _run_evaluation_job(
                     _update_job(job_id, {"status": "failed", "error": "未生成评估结果"})
         except Exception as e:
             logger.exception("评估处理失败 job_id=%s", job_id)
+            try:
+                await session.rollback()
+            except Exception:
+                logger.exception("评估失败回滚事务失败 job_id=%s", job_id)
             _update_job(job_id, {"status": "failed", "error": "评估处理失败，请查看服务端日志"})
 
 
 @router.post("/inputs", response_model=Dict[str, Any])
 async def create_input(
-    payload: Dict[str, Any],
+    payload: CreateInputRequest,
     request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
     audit_service: AuditService = Depends(get_audit_service),
@@ -151,15 +185,9 @@ async def create_input(
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """提交员工日报/任务进度等原始输入"""
-    employee_id = payload.get("employee_id")
-    period = payload.get("period")
-    content = payload.get("content")
-
-    if not employee_id or not period or not content:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="employee_id、period、content 必填",
-        )
+    employee_id = payload.employee_id
+    period = payload.period
+    content = payload.content
 
     # 输入护栏：在写入数据库前拦截 Prompt 注入、恶意指令与超大附件
     # 计划书 11.2 要求所有输入入口接入输入护栏
@@ -167,7 +195,7 @@ async def create_input(
         [
             {
                 "content": content,
-                "attachments": payload.get("attachments", []) or [],
+                "attachments": payload.attachments or [],
             }
         ]
     )
@@ -194,15 +222,15 @@ async def create_input(
     if role == Role.EMPLOYEE:
         employee_id = get_current_user_id(request)
 
-    input_id = payload.get("input_id") or f"input-{uuid.uuid4().hex[:8]}"
+    input_id = payload.input_id or f"input-{uuid.uuid4().hex[:8]}"
     raw = await eval_service.create_raw_input(
         {
             "input_id": input_id,
             "employee_id": employee_id,
             "period": period,
-            "type": payload.get("type", "daily_report"),
+            "type": payload.type,
             "content": content,
-            "attachments": payload.get("attachments", []),
+            "attachments": payload.attachments or [],
         }
     )
 
@@ -283,7 +311,7 @@ async def get_input(
 
 @router.post("/evaluations", response_model=Dict[str, Any])
 async def create_evaluation(
-    payload: Dict[str, Any],
+    payload: CreateEvaluationRequest,
     background_tasks: BackgroundTasks,
     request: Request,
     app_state: AppState = Depends(get_app_state),
@@ -292,15 +320,9 @@ async def create_evaluation(
     role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """异步触发一次员工评估，立即返回 job_id"""
-    employee_id = payload.get("employee_id")
-    period = payload.get("period")
-    raw_inputs = payload.get("raw_inputs", [])
-
-    if not employee_id or not period:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="employee_id 和 period 必填",
-        )
+    employee_id = payload.employee_id
+    period = payload.period
+    raw_inputs = [inp.model_dump() for inp in payload.raw_inputs]
 
     # employee 角色只能为自己创建评估
     if role == Role.EMPLOYEE:
@@ -845,8 +867,18 @@ async def re_evaluate(
         "messages": [],
     }
 
-    result = await graph.ainvoke(initial_state)
+    try:
+        result = await graph.ainvoke(initial_state)
+    except Exception:
+        logger.exception("重新评估图执行失败 evaluation_id=%s", evaluation_id)
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="评估处理失败",
+        )
+
     if result.get("error"):
+        await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="评估处理失败",
@@ -854,6 +886,7 @@ async def re_evaluate(
 
     new_eval = result.get("parsed_evaluation")
     if not new_eval:
+        await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="重新评估未返回结果",
@@ -1032,9 +1065,10 @@ async def switch_model_tier(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"tier 必须是其中之一: {valid_tiers}",
         )
-    old_tier = app_state.settings.model_tier
     reason = payload.get("reason")
-    app_state.settings.model_tier = tier
+    async with app_state._settings_lock:
+        old_tier = app_state.settings.model_tier
+        app_state.settings.model_tier = tier
     await audit_service.log(
         actor_id=get_current_user_id(request),
         action="switch_model_tier",
@@ -1122,7 +1156,15 @@ async def create_evaluation_with_interrupt(
         "messages": [],
     }
 
-    result = await graph.ainvoke(initial_state, config=config)
+    try:
+        result = await graph.ainvoke(initial_state, config=config)
+    except Exception:
+        logger.exception("interrupt 评估图执行失败 employee_id=%s", employee_id)
+        return {
+            "thread_id": thread_id,
+            "status": "error",
+            "error": "评估处理失败，请查看服务端日志",
+        }
 
     # 检查是否在 interrupt 处暂停
     interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
@@ -1237,7 +1279,15 @@ async def resume_interrupt(
     graph = _get_or_create_interrupt_graph(app_state)
     config = {"configurable": {"thread_id": thread_id}}
 
-    result = await graph.ainvoke(Command(resume=resume_value), config=config)
+    try:
+        result = await graph.ainvoke(Command(resume=resume_value), config=config)
+    except Exception:
+        logger.exception("interrupt 工作流恢复失败 thread_id=%s", thread_id)
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="评估处理失败",
+        )
 
     # 恢复后可能再次中断（如 manager_review → hr_audit）
     interrupts = result.get("__interrupt__") if isinstance(result, dict) else None

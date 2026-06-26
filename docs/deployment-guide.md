@@ -89,6 +89,7 @@ docker compose up -d --build
 | empvalue_db_data | SQLite 数据库 |
 | empvalue_chroma_data | 向量库 |
 | empvalue_redis_data | Redis 数据 |
+| empvalue_attachments | 本地附件（如上传的截图、语音、PDF） |
 
 ### 3.4 健康检查
 
@@ -101,6 +102,22 @@ curl http://localhost:8000/health
 ```json
 {"status": "ok"}
 ```
+
+### 3.5 数据库迁移（可选）
+
+容器首次启动时会在 `lifespan` 中自动创建数据表（基于 SQLAlchemy metadata），因此快速体验无需手动迁移。
+
+如需显式使用 Alembic 管理版本（推荐生产环境），配置文件位于 `backend/alembic.ini`，迁移脚本位于 `backend/alembic/versions/`：
+
+```bash
+# 进入 backend 目录后执行
+cd backend
+python scripts/migrate.py upgrade
+# 或
+alembic -c alembic.ini upgrade head
+```
+
+> `backend/alembic.ini` 中的数据库连接串会被 `backend/alembic/env.py` 自动替换为 `backend/.env` 里的 `DATABASE_URL`。
 
 ---
 
@@ -208,13 +225,30 @@ server {
 | `CLOUD_API_KEY` | 使用云端时 | 云端模型 API Key |
 | `CLOUD_BASE_URL` | 使用云端时 | 云端模型 Base URL |
 | `CLOUD_MODEL` | 使用云端时 | 云端模型名 |
+| `OPENAI_API_KEY` | 使用旧版 OpenAI 时 | 兼容旧命名，未配置 `CLOUD_*` 时兜底 |
+| `OPENAI_BASE_URL` | 使用旧版 OpenAI 时 | 兼容旧命名 |
+| `OPENAI_MODEL` | 使用旧版 OpenAI 时 | 兼容旧命名 |
 | `LOCAL_BASE_URL` | 使用本地时 | 本地模型 API 地址 |
+| `LOCAL_API_KEY` | 使用本地时 | 本地模型 API Key |
+| `LOCAL_MODEL_L1` | 使用本地时 | L1 档位模型名 |
 | `LOCAL_MODEL_L2` | 使用本地时 | L2 档位模型名 |
+| `LOCAL_MODEL_L3` | 使用本地时 | L3 档位模型名 |
 | `EMBEDDING_API_KEY` | 是 | Embedding 服务 Key |
 | `EMBEDDING_BASE_URL` | 是 | Embedding 服务地址 |
+| `EMBEDDING_MODEL` | 否 | Embedding 模型名，默认 `text-embedding-3-small` |
+| `EMBEDDING_DIMENSIONS` | 否 | Embedding 维度，默认 `1536` |
 | `DATABASE_URL` | 否 | 数据库连接串 |
 | `VECTOR_STORE_DIR` | 否 | 向量库存储路径 |
-| `LANGFUSE_*` | 否 | 可观测性配置 |
+| `ATTACHMENT_DIR` | 否 | 附件本地存储根目录 |
+| `TEMPERATURE` | 否 | LLM 推理温度，默认 `0.1` |
+| `MAX_TOKENS` | 否 | LLM 最大输出 token，默认 `4096` |
+| `JWT_SECRET_KEY` | 是 | JWT 签名密钥，生产环境必须修改 |
+| `JWT_ALGORITHM` | 否 | JWT 算法，默认 `HS256` |
+| `JWT_EXPIRE_MINUTES` | 否 | Token 有效期，默认 `1440` |
+| `AUTH_DEMO_MODE` | 否 | 演示模式，生产必须 `false` |
+| `LANGFUSE_PUBLIC_KEY` | 否 | Langfuse 公钥 |
+| `LANGFUSE_SECRET_KEY` | 否 | Langfuse 私钥 |
+| `LANGFUSE_HOST` | 否 | Langfuse 地址 |
 
 ### 5.2 模型档位策略
 
@@ -234,6 +268,13 @@ MODEL_TIER=L0
 ## 六、初始化与验证
 
 ### 6.1 创建演示账号
+
+> 注意：`seed-demo-users` 接口仅在 `AUTH_DEMO_MODE=true` 时可用。启动前请在 `backend/.env` 中设置：
+>
+> ```env
+> AUTH_DEMO_MODE=true
+> ```
+> 生产环境必须关闭演示模式并修改默认密码。
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/seed-demo-users

@@ -10,10 +10,13 @@ from core.config import get_settings
 def e2e_demo_mode():
     """E2E 测试需要开启演示模式以使用 seed-demo-users 接口"""
     settings = get_settings()
-    original = settings.auth_demo_mode
+    original_demo = settings.auth_demo_mode
+    original_jwt = settings.jwt_secret_key
     settings.auth_demo_mode = True
+    settings.jwt_secret_key = "test-only-jwt-secret-do-not-use-in-production"
     yield
-    settings.auth_demo_mode = original
+    settings.auth_demo_mode = original_demo
+    settings.jwt_secret_key = original_jwt
 
 
 def pytest_collection_modifyitems(config, items):

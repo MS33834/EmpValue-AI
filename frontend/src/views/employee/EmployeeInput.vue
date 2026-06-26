@@ -128,6 +128,10 @@ async function submit() {
     ElMessage.warning('请检查表单填写是否正确')
     return
   }
+  if (!auth.userId) {
+    ElMessage.error('用户信息缺失，请重新登录')
+    return
+  }
   const rawInputs = [
     { input_id: `daily-${genId()}`, type: 'daily_report', content: form.content, attachments: [] },
   ]
@@ -148,7 +152,7 @@ async function submit() {
     polling.value = true
 
     const { job_id } = await evalStore.createEvaluation({
-      employee_id: auth.userId || 'E1001',
+      employee_id: auth.userId,
       period: form.period,
       raw_inputs: rawInputs,
     })

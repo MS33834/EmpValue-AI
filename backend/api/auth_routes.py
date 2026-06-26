@@ -7,7 +7,7 @@ import uuid
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.jwt_handler import create_access_token, decode_access_token, extract_bearer_token
@@ -25,11 +25,15 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
 
 
 class RegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     user_id: str = Field(min_length=2, max_length=64)
     name: str = Field(min_length=1, max_length=128)
     email: EmailStr
@@ -39,6 +43,8 @@ class RegisterRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     access_token: str
     token_type: str = "bearer"
     user_id: str
@@ -257,6 +263,5 @@ async def seed_demo_users(
     await session.commit()
     return {
         "created": created,
-        "default_password": default_password,
         "note": "演示账号已初始化，生产环境请关闭演示模式并修改默认密码",
     }

@@ -11,9 +11,10 @@ from core.config import get_settings
 
 @pytest.fixture(autouse=True)
 def test_settings(monkeypatch):
-    """测试环境配置：开启演示模式、使用临时向量库目录。"""
+    """测试环境配置：开启演示模式、使用临时向量库目录、设置测试 JWT 密钥。"""
     settings = get_settings()
     monkeypatch.setattr(settings, "auth_demo_mode", True)
+    monkeypatch.setattr(settings, "jwt_secret_key", "test-only-jwt-secret-do-not-use-in-production")
 
     tmp_dir = tempfile.mkdtemp(prefix="chroma_test_")
     monkeypatch.setattr(settings, "vector_store_dir", tmp_dir)

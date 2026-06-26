@@ -1,5 +1,5 @@
 """
-输出护栏：PII 脱敏、歧视/偏见检测、员工视图负面词过滤。
+输出护栏：PII 脱敏、歧视/偏见检测、员工视图负面词过滤、幻觉标记检测。
 """
 
 import re
@@ -31,14 +31,52 @@ class OutputGuard:
     # 误脱敏会破坏输出可读性。生日等敏感日期应由上游输入护栏过滤。
     PII_PATTERNS = [
         (r"\b1[3-9]\d{9}\b", "手机号"),
+        # 支持 3-4-4 分组的手机号（带空格/连字符）
+        (r"\b1[3-9]\d[\s\-]?\d{4}[\s\-]?\d{4}\b", "手机号"),
         (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "邮箱"),
         (r"\b\d{17}[\dXx]\b", "身份证号"),
     ]
 
-    # 歧视/偏见敏感词
+    # 歧视/偏见敏感词（覆盖年龄/性别/地域/星座/血型等维度）
     BIASED_WORDS = [
         "性别", "年龄", "籍贯", "星座", "血型", "属相", "生肖",
         "剩女", "大龄", "外地", "农村", "乡下",
+        # 扩展场景词
+        "女员工", "男员工", "35岁", "90后", "00后",
+        "处女座", "天蝎座", "摩羯座", "O型血", "A型血", "B型血", "AB型血",
+        "该群体", "本地人优先", "外地人稳定性",
+    ]
+
+    # 场景词到偏见维度的映射（便于上层按维度统计）
+    BIAS_CATEGORY_MAP = {
+        "性别": ["性别", "女员工", "男员工", "男女"],
+        "年龄": ["年龄", "剩女", "大龄", "35岁", "90后", "00后"],
+        "籍贯": ["籍贯", "外地", "农村", "乡下"],
+        "地域": ["外地", "农村", "乡下", "本地人优先", "外地人稳定性"],
+        "星座": ["星座", "处女座", "天蝎座", "摩羯座", "双子座", "巨蟹座", "狮子座", "天秤座", "射手座", "水瓶座", "双鱼座", "白羊座", "金牛座"],
+        "血型": ["血型", "O型血", "A型血", "B型血", "AB型血"],
+        "生肖": ["属相", "生肖"],
+    }
+
+    # 偏见模式（比关键词更灵活，覆盖委婉表达）
+    BIAS_PATTERNS = [
+        r"(女|男)员工.{0,10}(容易|不适合|优先|差|弱|分心)",
+        r"(35|40|50)岁.{0,10}(以上|以下).{0,10}(能力|学习|创新|精力|体力)",
+        r"(外地|本地|农村|乡下).{0,15}(稳定性|素质|能力|优先|不好|差)",
+        r"(处女座|天蝎座|摩羯座|双子座|巨蟹座|狮子座|天秤座|射手座|水瓶座|双鱼座|白羊座|金牛座).{0,10}(挑剔|固执|情绪化|懒散|完美主义)",
+        r"(O|A|B|AB)型血.{0,10}(细心|粗心|性格|能力|适合)",
+        r"该群体.{0,10}(离职率|稳定性|能力|素质)",
+        r"本地人优先",
+        r"这个年纪.{0,10}(员工|人).{0,10}(不好管|能力差|不稳定)",
+    ]
+
+    # 幻觉 / 无证据夸张表述标记
+    HALLUCINATION_PATTERNS = [
+        r"史上最佳|有史以来最|史上最强",
+        r"从来没有人|从未有过|绝无仅有",
+        r"100%完美|完美无缺|无可挑剔|毫无缺点",
+        r"所有人都认为|大家一致认为|公认最",
+        r"绝对第一|当之无愧的第一",
     ]
 
     def redact_pii(self, text: str) -> tuple[str, List[str]]:
@@ -57,8 +95,26 @@ class OutputGuard:
         return [w for w in self.NEGATIVE_WORDS if w in text]
 
     def check_bias(self, text: str) -> List[str]:
-        """检查是否存在偏见表述"""
-        return [w for w in self.BIASED_WORDS if w in text]
+        """检查是否存在偏见表述（关键词 + 模式 + 维度标签）"""
+        hits = [w for w in self.BIASED_WORDS if w in text]
+        for pattern in self.BIAS_PATTERNS:
+            if re.search(pattern, text):
+                hits.append(f"bias_pattern:{pattern}")
+        # 若命中某维度下的场景词，同时返回该维度标签
+        for category, keywords in self.BIAS_CATEGORY_MAP.items():
+            if category in hits:
+                continue
+            if any(kw in text for kw in keywords):
+                hits.append(category)
+        return hits
+
+    def check_hallucination_markers(self, text: str) -> List[str]:
+        """检查是否存在无证据的夸张/幻觉表述"""
+        hits = []
+        for pattern in self.HALLUCINATION_PATTERNS:
+            if re.search(pattern, text):
+                hits.append(f"hallucination:{pattern}")
+        return hits
 
     def sanitize_employee_view(self, employee_view: Dict) -> OutputGuardResult:
         """对员工视图进行安全处理"""
@@ -102,6 +158,11 @@ class OutputGuard:
         if biased:
             violations.append(f"biased_words:{','.join(biased)}")
 
+        # 幻觉 / 过度自信检查
+        hallucination = self.check_hallucination_markers(view_text)
+        if hallucination:
+            violations.append(f"hallucination:{','.join(hallucination)}")
+
         return OutputGuardResult(
             clean_text=str(employee_view),
             violations=violations,
@@ -111,6 +172,7 @@ class OutputGuard:
     def sanitize_manager_view(self, manager_view: Dict) -> OutputGuardResult:
         """对管理视图进行 PII 脱敏（允许尖锐判断，但脱敏敏感信息）"""
         redacted_all = []
+        violations = []
 
         def _redact_inplace(obj):
             """递归遍历 dict/list，对每个字符串字段 in-place 脱敏"""
@@ -128,8 +190,17 @@ class OutputGuard:
 
         _redact_inplace(manager_view)
 
+        # 管理视图同样应检测偏见与幻觉（仅记录违规，不阻断）
+        view_text = str(manager_view)
+        biased = self.check_bias(view_text)
+        if biased:
+            violations.append(f"biased_words:{','.join(biased)}")
+        hallucination = self.check_hallucination_markers(view_text)
+        if hallucination:
+            violations.append(f"hallucination:{','.join(hallucination)}")
+
         return OutputGuardResult(
             clean_text=str(manager_view),
-            violations=[],
+            violations=violations,
             redacted_entities=redacted_all,
         )
