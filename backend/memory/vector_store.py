@@ -46,6 +46,14 @@ class DummyEmbeddingFunction:
             results.append(vec)
         return results
 
+    async def embed_query(self, text: str) -> List[float]:
+        """单条查询文本的 embedding，与 __call__ 保持一致
+
+        ChromaDB 1.x 在 query 路径会内部调用 embedding_function.embed_query，
+        缺少该方法会导致 DummyEmbeddingFunction 无法用于检索（AttributeError）。
+        """
+        return self([text])[0]
+
 
 def _init_embedding(settings: Settings):
     """优先使用配置的真实 embedding API；未配置则使用 dummy embedding，避免下载模型。"""
@@ -95,7 +103,11 @@ class ChromaMemoryStore(MemoryStore):
 
         where: Dict[str, Any] = {"employee_id": employee_id}
         if period:
-            where["period"] = {"$ne": period}
+            # ChromaDB 1.x 要求 where 顶层仅含一个操作符，多条件需用 $and 组合
+            where = {"$and": [
+                {"employee_id": employee_id},
+                {"period": {"$ne": period}},
+            ]}
         query_kwargs["where"] = where
 
         if self.embedding and hasattr(self.embedding, "embed_query"):

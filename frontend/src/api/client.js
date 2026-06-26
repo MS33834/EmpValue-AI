@@ -107,6 +107,8 @@ export const managerApi = {
   pendingApprovals: () => api.get('/manager/pending-approvals'),
   dashboard: () => api.get('/manager/dashboard'),
   teamAnalytics: (teamId, members) => api.post(`/teams/${teamId}/analytics`, { members }),
+  teamAnalyticsGet: (teamId, members) =>
+    api.get(`/teams/${teamId}/analytics`, { params: { members: (members || []).join(',') } }),
 }
 
 export const hrApi = {
@@ -121,6 +123,14 @@ export const employeeApi = {
 export const inputApi = {
   create: (payload) => api.post('/inputs', payload),
   list: (employeeId, period) => api.get('/inputs', { params: { employee_id: employeeId, period } }),
+  get: (inputId) => api.get(`/inputs/${inputId}`),
+}
+
+// LangGraph 原生 interrupt 工作流（与 DB 状态机审批流并存）
+export const evaluationInterruptApi = {
+  create: (payload) => api.post('/evaluations-interrupt', payload),
+  getState: (threadId) => api.get(`/evaluations-interrupt/${threadId}/state`),
+  resume: (threadId, payload) => api.post(`/evaluations-interrupt/${threadId}/resume`, payload),
 }
 
 export const adminApi = {

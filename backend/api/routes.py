@@ -19,6 +19,7 @@ from api.deps import (
 )
 from auth.rbac import Role, can_access, get_client_ip, get_current_user_id, require_role
 from core.database import get_db
+from core.guards import InputGuard
 from core.tracing import tracer
 from models.constants import EvaluationStatus
 from services.approval_service import ApprovalService
@@ -31,6 +32,9 @@ router = APIRouter(prefix="/api/v1")
 
 # 评估异步任务状态存储（生产环境应替换为 Redis / 数据库）
 job_store: Dict[str, Dict[str, Any]] = {}
+
+# 输入护栏单例：拦截 Prompt 注入、恶意指令、超大输入与不支持的附件类型
+_input_guard = InputGuard()
 
 
 def _update_job(job_id: str, update: Dict[str, Any]) -> None:
@@ -155,6 +159,35 @@ async def create_input(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="employee_id、period、content 必填",
+        )
+
+    # 输入护栏：在写入数据库前拦截 Prompt 注入、恶意指令与超大附件
+    # 计划书 11.2 要求所有输入入口接入输入护栏
+    guard_result = _input_guard.check(
+        [
+            {
+                "content": content,
+                "attachments": payload.get("attachments", []) or [],
+            }
+        ]
+    )
+    if not guard_result.allowed:
+        # 拦截行为计入审计日志，便于安全运营追溯
+        await audit_service.log(
+            actor_id=get_current_user_id(request),
+            action="input_blocked",
+            employee_id=employee_id,
+            details={
+                "period": period,
+                "reason": guard_result.reason,
+                "triggered_rules": guard_result.triggered_rules,
+            },
+            ip_address=get_client_ip(request),
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"输入被拦截: {guard_result.reason}",
         )
 
     # employee 角色只能为自己提交输入
@@ -407,13 +440,24 @@ async def get_employee_view(
 async def get_manager_view(
     evaluation_id: str,
     request: Request,
-    role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
     eval_service: EvaluationService = Depends(get_evaluation_service),
+    audit_service: AuditService = Depends(get_audit_service),
+    session: AsyncSession = Depends(get_db),
+    role: Role = Depends(require_role(Role.MANAGER, Role.HR, Role.ADMIN)),
 ):
     """管理/HR 可见视图"""
     evaluation = await eval_service.get_evaluation(evaluation_id)
     if not evaluation:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="评估不存在")
+    # 管理视图查看行为计入审计日志（计划书 11.4：所有查看行为计入审计日志）
+    await audit_service.log(
+        actor_id=get_current_user_id(request),
+        action="view_manager_view",
+        evaluation_id=evaluation_id,
+        employee_id=evaluation.employee_id,
+        ip_address=get_client_ip(request),
+    )
+    await session.commit()
     return {
         "evaluation_id": evaluation.evaluation_id,
         "employee_id": evaluation.employee_id,

@@ -66,8 +66,22 @@ const evalStore = useEvaluationStore()
 const auth = useAuthStore()
 
 const formRef = ref(null)
+
+// 计算当前 ISO 周期，例如 2026-W26
+function currentIsoWeek() {
+  const now = new Date()
+  const target = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const dayNum = (target.getUTCDay() + 6) % 7
+  target.setUTCDate(target.getUTCDate() - dayNum + 3)
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4))
+  const firstDayNum = (firstThursday.getUTCDay() + 6) % 7
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNum + 3)
+  const weekNum = 1 + Math.round((target - firstThursday) / (7 * 24 * 3600 * 1000))
+  return `${target.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
 const form = reactive({
-  period: '2026-W25',
+  period: currentIsoWeek(),
   content: '',
   tasks: '',
 })

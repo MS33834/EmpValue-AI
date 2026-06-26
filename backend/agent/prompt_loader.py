@@ -1,12 +1,13 @@
 """
 Prompt 加载与渲染工具
 使用正则表达式精确替换占位符，避免 Prompt 中的 JSON 示例被误解析。
+支持版本管理：当前版本位于 prompts/{name}.md，历史快照位于 prompts/versions/{name}_v{X.Y}.md。
 """
 
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class PromptLoader:
@@ -40,6 +41,36 @@ class PromptLoader:
                 return match.group(1)
         return "unknown"
 
+    def list_versions(self, name: str) -> List[str]:
+        """
+        列出某 prompt 在 versions/ 目录下的所有历史版本快照。
+        返回按版本号排序的列表，例如 ["v0.1", "v0.2"]。
+        """
+        versions_dir = self.prompts_dir / "versions"
+        if not versions_dir.exists():
+            return []
+        versions: List[str] = []
+        for path in sorted(versions_dir.glob(f"{name}_v*.md")):
+            stem = path.stem  # 例如 daily_evaluation_v0.1
+            suffix = stem.split("_v", 1)[-1] if "_v" in stem else ""
+            if suffix:
+                versions.append(f"v{suffix}")
+        return versions
+
+    def load_version(self, name: str, version: str) -> str:
+        """
+        加载指定版本的 Prompt 快照（位于 prompts/versions/{name}_v{X.Y}.md）。
+        version 接受 "v0.1" 或 "0.1" 两种写法。
+        """
+        normalized = version[1:] if version.startswith("v") else version
+        path = self.prompts_dir / "versions" / f"{name}_v{normalized}.md"
+        if not path.exists():
+            available = self.list_versions(name)
+            raise FileNotFoundError(
+                f"Prompt 版本不存在: {path}，可用版本: {available}"
+            )
+        return path.read_text(encoding="utf-8")
+
     def render(
         self,
         name: str,
@@ -51,6 +82,46 @@ class PromptLoader:
     ) -> str:
         """渲染 Prompt，替换占位符"""
         template = self.load(name)
+        return self._render_template(
+            template,
+            raw_inputs=raw_inputs,
+            employee_history=employee_history,
+            company_kb=company_kb,
+            employee_id=employee_id,
+            period=period,
+        )
+
+    def render_version(
+        self,
+        name: str,
+        version: str,
+        raw_inputs: List[Dict[str, Any]],
+        employee_history: Optional[List[Dict[str, Any]]] = None,
+        company_kb: Optional[List[Dict[str, Any]]] = None,
+        employee_id: str = "",
+        period: str = "",
+    ) -> str:
+        """渲染指定版本的 Prompt，替换占位符"""
+        template = self.load_version(name, version)
+        return self._render_template(
+            template,
+            raw_inputs=raw_inputs,
+            employee_history=employee_history,
+            company_kb=company_kb,
+            employee_id=employee_id,
+            period=period,
+        )
+
+    def _render_template(
+        self,
+        template: str,
+        raw_inputs: List[Dict[str, Any]],
+        employee_history: Optional[List[Dict[str, Any]]] = None,
+        company_kb: Optional[List[Dict[str, Any]]] = None,
+        employee_id: str = "",
+        period: str = "",
+    ) -> str:
+        """渲染模板，替换已知占位符，保留其他花括号"""
         values = {
             "raw_inputs": json.dumps(raw_inputs, ensure_ascii=False, indent=2),
             "employee_history": json.dumps(employee_history or [], ensure_ascii=False, indent=2),

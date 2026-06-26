@@ -120,9 +120,11 @@ async function submit() {
   try {
     const evaluationId = selected.value.evaluation_id
     if (form.type === 'appeal') {
-      await evaluationApi.appeal(evaluationId, { content: form.content })
+      // 后端 appeal 端点读取 comment 字段
+      await evaluationApi.appeal(evaluationId, { comment: form.content })
       ElMessage.success('申诉已提交')
     } else {
+      // 后端 feedback 端点读取 content 字段
       await evaluationApi.feedback(evaluationId, { content: form.content, type: 'feedback' })
       ElMessage.success('反馈已提交')
     }

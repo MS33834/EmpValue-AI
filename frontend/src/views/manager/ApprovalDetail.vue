@@ -50,6 +50,7 @@
           <el-button type="success" :loading="submitting" @click="approve">通过</el-button>
           <el-button type="danger" :loading="submitting" @click="reject">驳回</el-button>
           <el-button type="warning" :loading="submitting" @click="requestHrReview">提交 HR 复核</el-button>
+          <el-button :loading="submitting" @click="reEvaluate">重新评估</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -63,7 +64,7 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { evaluationApi } from '@/api/client'
 
 const route = useRoute()
@@ -144,6 +145,32 @@ async function requestHrReview() {
     router.push('/manager')
   } catch (err) {
     ElMessage.error(err.message)
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function reEvaluate() {
+  if (!evaluation.value) return
+  try {
+    await ElMessageBox.confirm(
+      '确认基于现有输入重新运行 AI 评估？将生成新的草稿结果。',
+      '重新评估',
+      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  submitting.value = true
+  try {
+    const res = await evaluationApi.reEvaluate(evaluationId.value, {
+      feedback: comment.value ? [comment.value] : [],
+    })
+    ElMessage.success(`已重新评估，状态：${res.status}`)
+    comment.value = ''
+    await loadEvaluation()
+  } catch (err) {
+    ElMessage.error(err.message || '重新评估失败')
   } finally {
     submitting.value = false
   }

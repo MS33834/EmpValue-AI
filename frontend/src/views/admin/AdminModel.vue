@@ -99,6 +99,7 @@ const currentTier = ref('L0')
 const selectedTier = ref('L0')
 
 const tiers = [
+  { value: 'auto', label: 'auto 自动选择' },
   { value: 'L0', label: 'L0 云端大模型' },
   { value: 'L1', label: 'L1 边缘小模型' },
   { value: 'L2', label: 'L2 标准模型' },
@@ -106,6 +107,11 @@ const tiers = [
 ]
 
 const tierMap = {
+  auto: {
+    description: '根据硬件自动选择最佳档位',
+    model_name: '动态选择',
+    provider_type: 'cloud',
+  },
   L0: {
     description: '云端大模型，最强推理能力',
     model_name: '云端模型',
