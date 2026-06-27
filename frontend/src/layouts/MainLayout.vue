@@ -1,11 +1,14 @@
 <template>
   <el-container class="main-layout">
+    <!-- 无障碍：跳转到主内容，键盘用户可快速跳过导航 -->
+    <a href="#main-content" class="skip-link">跳转到主内容</a>
     <el-aside width="220px" class="sidebar">
-      <div class="logo">EmpValue-AI</div>
+      <div class="logo" role="heading" aria-level="1">EmpValue-AI</div>
       <el-menu
         :default-active="activeMenu"
         class="menu"
         router
+        aria-label="主导航"
         background-color="#1f2937"
         text-color="#e5e7eb"
         active-text-color="#67c23a"
@@ -61,7 +64,7 @@
           </el-menu-item>
         </template>
 
-        <el-menu-item @click="handleLogout">
+        <el-menu-item aria-label="退出登录" @click="handleLogout">
           <el-icon><SwitchButton /></el-icon>
           <span>退出登录</span>
         </el-menu-item>
@@ -69,11 +72,11 @@
     </el-aside>
 
     <el-container>
-      <el-header class="header">
+      <el-header class="header" role="banner">
         <span class="header-title">{{ pageTitle }}</span>
-        <span class="header-role">当前角色：{{ roleLabel }}</span>
+        <span class="header-role" aria-live="polite">当前角色：{{ roleLabel }}</span>
       </el-header>
-      <el-main class="main-content">
+      <el-main id="main-content" class="main-content" tabindex="-1">
         <router-view />
       </el-main>
     </el-container>
@@ -107,6 +110,26 @@ function handleLogout() {
 <style scoped>
 .main-layout {
   height: 100vh;
+}
+/* 无障碍：跳转链接默认隐藏，键盘聚焦时显现 */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  padding: 8px 16px;
+  background: #409eff;
+  color: #fff;
+  border-radius: 0 0 4px 0;
+  text-decoration: none;
+  font-size: 14px;
+}
+.skip-link:focus {
+  left: 0;
+}
+/* 主内容区获得焦点时去除默认轮廓偏移，保留可见焦点环 */
+#main-content:focus {
+  outline: none;
 }
 .sidebar {
   background-color: #1f2937;

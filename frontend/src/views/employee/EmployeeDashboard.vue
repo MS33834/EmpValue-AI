@@ -104,7 +104,7 @@ onMounted(loadData)
   line-height: 1.6;
 }
 .evidence {
-  color: #6b7280;
+  color: #4b5563;
   font-size: 13px;
   margin-top: 4px;
 }

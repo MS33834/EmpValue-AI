@@ -2,7 +2,7 @@
   <div class="login-page">
     <el-card class="login-card" shadow="hover">
       <template #header>
-        <div class="login-header">EmpValue-AI</div>
+        <h1 class="login-header">EmpValue-AI</h1>
       </template>
       <p class="login-subtitle">AI 驱动员工价值量化与成长系统</p>
 
@@ -171,6 +171,7 @@ async function seedDemoUsers() {
   text-align: center;
   font-size: 22px;
   font-weight: bold;
+  margin: 0;
 }
 .login-subtitle {
   text-align: center;
@@ -182,7 +183,7 @@ async function seedDemoUsers() {
 }
 .demo-tip {
   font-size: 12px;
-  color: #909399;
+  color: #6b7280;
   text-align: center;
   line-height: 1.6;
 }

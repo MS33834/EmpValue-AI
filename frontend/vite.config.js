@@ -21,5 +21,17 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    // 代码分割：将体积较大的第三方库拆分为独立 chunk，避免主包过大
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'element-plus': ['element-plus', '@element-plus/icons-vue'],
+          echarts: ['echarts', 'vue-echarts'],
+          vuecore: ['vue', 'vue-router', 'pinia'],
+        },
+      },
+    },
+    // 拆分后单 chunk 仍超 500KB 时才告警，避免噪音
+    chunkSizeWarningLimit: 600,
   },
 })
