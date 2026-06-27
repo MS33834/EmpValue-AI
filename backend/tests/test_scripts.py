@@ -4,6 +4,7 @@
 """
 
 import pytest
+from sqlalchemy import select
 
 from data.loader import ProfileLoader
 from eval.evaluate import build_mock_model_router
@@ -108,3 +109,124 @@ class TestRunMockEvaluations:
 
         assert scores["star"] > scores["slacker"], \
             f"明星型({scores['star']})应高于摸鱼型({scores['slacker']})"
+
+
+class TestSeedDemoMain:
+    """seed_demo.main() 端到端：插入演示数据 + 重复执行跳过"""
+
+    @pytest.mark.asyncio
+    async def test_main_inserts_demo_data(self, monkeypatch, tmp_path):
+        import tempfile
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        import scripts.seed_demo as seed
+
+        # 临时 SQLite 引擎与会话工厂，替换模块级真实引擎
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        temp_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp.name}", future=True)
+        temp_session = async_sessionmaker(
+            bind=temp_engine, expire_on_commit=False, autocommit=False, autoflush=False
+        )
+        monkeypatch.setattr(seed, "engine", temp_engine)
+        monkeypatch.setattr(seed, "AsyncSessionLocal", temp_session)
+
+        # 用假向量/知识库存储替代真实 Chroma，避免外部依赖
+        class _FakeMemory:
+            def __init__(self, *a, **kw):
+                self.calls = 0
+
+            async def add_memory(self, *a, **kw):
+                self.calls += 1
+
+        class _FakeKB:
+            def __init__(self, *a, **kw):
+                self.docs = 0
+
+            async def add_document(self, **kw):
+                self.docs += 1
+
+        fake_mem = _FakeMemory()
+        fake_kb = _FakeKB()
+        monkeypatch.setattr(seed, "ChromaMemoryStore", lambda *a, **kw: fake_mem)
+        monkeypatch.setattr(seed, "ChromaCompanyKB", lambda *a, **kw: fake_kb)
+
+        await seed.main()
+
+        # 验证数据已写入临时库
+        from models.models import Evaluation, RawInput, User
+        async with temp_session() as s:
+            users = (await s.execute(select(User))).scalars().all()
+            assert any(u.user_id == "E1001" for u in users)
+            eval_obj = (
+                await s.execute(
+                    select(Evaluation).where(Evaluation.evaluation_id == "EV-DEMO-001")
+                )
+            ).scalar_one_or_none()
+            assert eval_obj is not None
+            assert eval_obj.status == "approved"
+            assert eval_obj.approver_id == "M001"
+            raws = (await s.execute(select(RawInput))).scalars().all()
+            assert len(raws) == 5
+
+        # 向量记忆与知识库各被调用一次
+        assert fake_mem.calls == 1
+        assert fake_kb.docs == 2
+
+        await temp_engine.dispose()
+        import os
+        os.unlink(tmp.name)
+
+    @pytest.mark.asyncio
+    async def test_main_skips_when_data_exists(self, monkeypatch, capsys):
+        import tempfile
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        import scripts.seed_demo as seed
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        temp_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp.name}", future=True)
+        temp_session = async_sessionmaker(
+            bind=temp_engine, expire_on_commit=False, autocommit=False, autoflush=False
+        )
+        monkeypatch.setattr(seed, "engine", temp_engine)
+        monkeypatch.setattr(seed, "AsyncSessionLocal", temp_session)
+
+        # 计数假存储：第二次执行若未跳过会再次调用，断言仅被调用一次
+        class _FakeMemory:
+            def __init__(self, *a, **kw):
+                self.calls = 0
+
+            async def add_memory(self, *a, **kw):
+                self.calls += 1
+
+        class _FakeKB:
+            def __init__(self, *a, **kw):
+                self.docs = 0
+
+            async def add_document(self, **kw):
+                self.docs += 1
+
+        fake_mem = _FakeMemory()
+        fake_kb = _FakeKB()
+        monkeypatch.setattr(seed, "ChromaMemoryStore", lambda *a, **kw: fake_mem)
+        monkeypatch.setattr(seed, "ChromaCompanyKB", lambda *a, **kw: fake_kb)
+
+        # 第一次插入
+        await seed.main()
+        assert fake_mem.calls == 1
+        assert fake_kb.docs == 2
+        # 第二次应跳过，不再次写入向量/知识库
+        await seed.main()
+        captured = capsys.readouterr()
+        assert "已存在" in captured.out
+        assert fake_mem.calls == 1
+        assert fake_kb.docs == 2
+
+        await temp_engine.dispose()
+        import os
+        os.unlink(tmp.name)
+

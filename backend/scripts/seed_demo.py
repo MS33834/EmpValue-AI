@@ -92,8 +92,11 @@ async def main():
         if not user:
             session.add(User(user_id="E1001", name="张三", role="employee", department="技术部"))
 
-        existing = await session.get(Evaluation, "EV-DEMO-001")
-        if existing:
+        # 按 evaluation_id 唯一列查询（主键是自增 id，不能用 session.get 查 evaluation_id）
+        existing = await session.execute(
+            select(Evaluation).where(Evaluation.evaluation_id == "EV-DEMO-001")
+        )
+        if existing.scalar_one_or_none():
             print("演示数据已存在，跳过")
             return
 
