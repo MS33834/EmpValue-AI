@@ -61,6 +61,45 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- 反馈闭环：员工可在此追踪已提交反馈/申诉的处理进度 -->
+    <el-row :gutter="20" class="records-row">
+      <el-col :span="24">
+        <el-card v-loading="recordsLoading" :aria-busy="recordsLoading">
+          <template #header>
+            <span>我的反馈与申诉记录</span>
+          </template>
+          <!-- 无障碍：记录动态加载，用 role=status 通告屏幕阅读器 -->
+          <el-table
+            v-if="records.length"
+            :data="records"
+            style="width: 100%"
+            empty-text="暂无记录"
+            role="status"
+            aria-live="polite"
+          >
+            <el-table-column prop="type" label="类型" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.type === 'appeal' ? 'warning' : 'info'" size="small">
+                  {{ row.type === 'appeal' ? '申诉' : '反馈' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="evaluation.period" label="周期" width="120" />
+            <el-table-column prop="content" label="内容" show-overflow-tooltip />
+            <el-table-column prop="created_at" label="提交时间" width="180" />
+            <el-table-column label="处理状态" width="140">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.evaluation.status)" size="small">
+                  {{ statusLabel(row.evaluation.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else description="暂无反馈或申诉记录" />
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
@@ -73,13 +112,42 @@ import { employeeApi, evaluationApi } from '@/api/client'
 const auth = useAuthStore()
 const loading = ref(false)
 const submitting = ref(false)
+const recordsLoading = ref(false)
 const evaluations = ref([])
 const selected = ref(null)
+// 已提交的反馈/申诉记录，含关联评估当前状态，用于追踪处理进度
+const records = ref([])
 
 const form = reactive({
   type: 'feedback',
   content: '',
 })
+
+// 评估状态 -> 中文标签（申诉提交后评估会回到 manager_review，重评后状态再次变化）
+const STATUS_LABELS = {
+  ai_drafted: 'AI 草稿',
+  manager_review: '主管复核中',
+  hr_audit: 'HR 复核中',
+  approved: '已通过',
+  rejected: '已驳回',
+}
+
+// 评估状态 -> 标签颜色（非仅靠颜色，均配有文字）
+const STATUS_TAG_TYPES = {
+  ai_drafted: 'info',
+  manager_review: 'warning',
+  hr_audit: 'danger',
+  approved: 'success',
+  rejected: 'danger',
+}
+
+function statusLabel(status) {
+  return STATUS_LABELS[status] || status
+}
+
+function statusTagType(status) {
+  return STATUS_TAG_TYPES[status] || 'info'
+}
 
 function handleSelect(row) {
   selected.value = row
@@ -101,6 +169,19 @@ async function loadData() {
     ElMessage.error(formatError(err, '加载评估列表失败'))
   } finally {
     loading.value = false
+  }
+}
+
+async function loadRecords() {
+  recordsLoading.value = true
+  try {
+    const data = await employeeApi.feedback(auth.userId)
+    records.value = data.feedback || []
+  } catch (err) {
+    console.error('加载反馈记录失败:', err)
+    ElMessage.error(formatError(err, '加载反馈记录失败'))
+  } finally {
+    recordsLoading.value = false
   }
 }
 
@@ -126,6 +207,8 @@ async function submit() {
       ElMessage.success('反馈已提交')
     }
     form.content = ''
+    // 提交成功后刷新记录，让员工立即看到最新处理状态
+    await loadRecords()
   } catch (err) {
     ElMessage.error(formatError(err, '提交失败，请稍后重试'))
   } finally {
@@ -133,7 +216,14 @@ async function submit() {
   }
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadData()
+  loadRecords()
+})
 </script>
 
-<style scoped></style>
+<style scoped>
+.records-row {
+  margin-top: 20px;
+}
+</style>

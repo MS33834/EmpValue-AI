@@ -324,6 +324,54 @@ def test_create_evaluation_feedback(client, mock_app_state, created_evaluation_i
     assert data["content"]
 
 
+def test_list_evaluation_feedback(client, mock_app_state, created_evaluation_id):
+    """查询某评估下的反馈记录，返回内容与关联评估当前状态"""
+    client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/feedback",
+        json={"content": "协作维度证据偏少", "type": "feedback"},
+        headers={"x-user-id": "E1001"},
+    )
+    resp = client.get(
+        f"/api/v1/evaluations/{created_evaluation_id}/feedback",
+        headers={"x-user-role": "manager"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] >= 1
+    item = data["feedback"][0]
+    assert item["content"] == "协作维度证据偏少"
+    # 关联评估当前状态字段存在，供前端追踪处理进度
+    assert "status" in item["evaluation"]
+    assert item["evaluation"]["period"] == "2026-W25"
+
+
+def test_list_employee_feedback_tracks_appeal_status(client, mock_app_state, created_evaluation_id):
+    """员工视角：提交申诉后，记录面板可查到申诉及评估回到 manager_review 的状态"""
+    # 先审批通过
+    client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/approve",
+        json={"current_status": "manager_review", "actor_id": "M001"},
+        headers={"x-user-role": "manager", "x-user-id": "M001"},
+    )
+    # 员工申诉
+    client.post(
+        f"/api/v1/evaluations/{created_evaluation_id}/appeal",
+        json={"comment": "对评分有异议"},
+        headers={"x-user-id": "E1001"},
+    )
+    # 员工查询自己的反馈/申诉记录
+    resp = client.get(
+        "/api/v1/employees/E1001/feedback",
+        headers={"x-user-id": "E1001"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["employee_id"] == "E1001"
+    assert data["count"] >= 1
+    appeal = next(f for f in data["feedback"] if f["type"] == "appeal")
+    assert appeal["evaluation"]["status"] == "manager_review"
+
+
 def test_get_pending_approvals(client, mock_app_state, created_evaluation_id):
     resp = client.get(
         "/api/v1/manager/pending-approvals",

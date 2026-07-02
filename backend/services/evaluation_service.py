@@ -186,6 +186,30 @@ class EvaluationService:
         await self.session.flush()
         return feedback
 
+    async def list_feedback(
+        self,
+        employee_id: Optional[str] = None,
+        evaluation_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[tuple[Feedback, Evaluation]]:
+        """
+        查询反馈/申诉记录，并关联其所属评估（用于前端追踪申诉处理进度）。
+        返回 [(feedback, evaluation), ...]，按反馈创建时间倒序。
+        不 commit（只读查询）。
+        """
+        stmt = (
+            select(Feedback, Evaluation)
+            .join(Evaluation, Feedback.evaluation_id == Evaluation.evaluation_id)
+            .order_by(Feedback.created_at.desc())
+            .limit(limit)
+        )
+        if employee_id:
+            stmt = stmt.where(Feedback.employee_id == employee_id)
+        if evaluation_id:
+            stmt = stmt.where(Feedback.evaluation_id == evaluation_id)
+        result = await self.session.execute(stmt)
+        return result.all()
+
     async def get_user(self, user_id: str) -> Optional[User]:
         result = await self.session.execute(
             select(User).where(User.user_id == user_id)

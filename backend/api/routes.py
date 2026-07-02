@@ -656,6 +656,63 @@ async def get_evaluation_audit_logs(
     }
 
 
+def _serialize_feedback_row(feedback, evaluation) -> Dict[str, Any]:
+    """序列化反馈记录及其关联评估的当前状态，供前端追踪申诉处理进度"""
+    return {
+        "feedback_id": feedback.feedback_id,
+        "evaluation_id": feedback.evaluation_id,
+        "employee_id": feedback.employee_id,
+        "type": feedback.type,
+        "content": feedback.content,
+        "created_at": feedback.created_at.isoformat(),
+        "evaluation": {
+            "period": evaluation.period,
+            "overall_score": evaluation.overall_score,
+            "status": evaluation.status,
+            "created_at": evaluation.created_at.isoformat(),
+            "approved_at": evaluation.approved_at.isoformat() if evaluation.approved_at else None,
+        },
+    }
+
+
+@router.get("/evaluations/{evaluation_id}/feedback")
+async def list_evaluation_feedback(
+    evaluation_id: str,
+    request: Request,
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """查询某评估下的反馈/申诉记录（员工仅可查自己的评估）"""
+    rows = await eval_service.list_feedback(evaluation_id=evaluation_id, limit=200)
+    # employee 仅能查看本人评估的反馈
+    if role == Role.EMPLOYEE:
+        current_user_id = get_current_user_id(request)
+        rows = [r for r in rows if r[0].employee_id == current_user_id]
+    return {
+        "evaluation_id": evaluation_id,
+        "feedback": [_serialize_feedback_row(fb, ev) for fb, ev in rows],
+        "count": len(rows),
+    }
+
+
+@router.get("/employees/{employee_id}/feedback")
+async def list_employee_feedback(
+    employee_id: str,
+    request: Request,
+    eval_service: EvaluationService = Depends(get_evaluation_service),
+    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+):
+    """查询员工的反馈/申诉记录及其关联评估当前状态，用于追踪申诉处理进度"""
+    if role == Role.EMPLOYEE:
+        employee_id = get_current_user_id(request)
+    rows = await eval_service.list_feedback(employee_id=employee_id, limit=200)
+    return {
+        "employee_id": employee_id,
+        "feedback": [_serialize_feedback_row(fb, ev) for fb, ev in rows],
+        "count": len(rows),
+    }
+
+
 @router.get("/manager/pending-approvals")
 async def get_pending_approvals(
     eval_service: EvaluationService = Depends(get_evaluation_service),
@@ -811,6 +868,16 @@ async def appeal_evaluation(
             actor_id=actor_id,
             actor_role=role.value,
             comment=comment,
+        )
+        # 申诉写入 Feedback 表（type=appeal），使员工反馈面板可追踪申诉处理进度
+        await eval_service.create_feedback(
+            {
+                "feedback_id": f"FB-{uuid.uuid4().hex[:8]}",
+                "evaluation_id": evaluation_id,
+                "employee_id": evaluation.employee_id,
+                "type": "appeal",
+                "content": comment or "员工提出申诉",
+            }
         )
         await audit_service.log(
             actor_id=actor_id,

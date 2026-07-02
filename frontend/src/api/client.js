@@ -127,6 +127,8 @@ export const hrApi = {
 export const employeeApi = {
   dashboard: (employeeId) => api.get(`/employees/${employeeId}/dashboard`),
   history: (employeeId) => api.get(`/employees/${employeeId}/history`),
+  // 反馈/申诉记录及其关联评估当前状态，用于追踪申诉处理进度
+  feedback: (employeeId) => api.get(`/employees/${employeeId}/feedback`),
 }
 
 export const inputApi = {

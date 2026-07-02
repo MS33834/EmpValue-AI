@@ -10,6 +10,7 @@ import pytest
 from eval.evaluate import (
     NEGATIVE_WORDS,
     MockProvider,
+    VersionedPromptLoader,
     build_mock_evaluation,
     build_mock_model_router,
     check_contains,
@@ -17,9 +18,11 @@ from eval.evaluate import (
     check_evidence_cited,
     check_overall_score_range,
     check_view_keys,
+    compare_versions,
     evaluate_case,
     load_dataset,
     run_case,
+    run_dataset,
     validate_schema,
 )
 from core.providers.base import ChatMessage, ProviderConfig
@@ -280,3 +283,87 @@ class TestLoadDataset:
             assert "employee_id" in case
             assert "raw_inputs" in case
             assert "expected_overall_score_range" in case
+
+
+class TestVersionedPromptLoader:
+    """Prompt 版本回归：VersionedPromptLoader 指向历史版本快照"""
+
+    def test_version_returns_target(self):
+        loader = VersionedPromptLoader(version="v0.1")
+        assert loader.version("daily_evaluation") == "v0.1"
+
+    def test_render_uses_version_snapshot(self):
+        loader = VersionedPromptLoader(version="v0.1")
+        rendered = loader.render(
+            "daily_evaluation",
+            raw_inputs=[{"day": "周一"}],
+            employee_id="E1",
+            period="W1",
+        )
+        # 渲染结果应包含原始输入内容，且头部标注 v0.1
+        assert "周一" in rendered
+        assert "v0.1" in rendered
+
+    def test_version_distinct_from_current(self):
+        from agent.prompt_loader import PromptLoader
+
+        current = PromptLoader()
+        versioned = VersionedPromptLoader(version="v0.1")
+        # 当前版本与 v0.1 一致（仓库仅一个版本），二者均能解析出版本号
+        assert current.version("daily_evaluation") == versioned.version("daily_evaluation")
+
+
+class TestPromptVersionRegression:
+    """Prompt 变更门禁：run_dataset + compare_versions"""
+
+    @pytest.mark.asyncio
+    async def test_run_dataset_with_versioned_loader(self):
+        dataset = load_dataset()
+        router = build_mock_model_router(tier="L0")
+        loader = VersionedPromptLoader(version="v0.1")
+        results = await run_dataset(dataset, router, prompt_loader=loader, skip_contains=True, skip_score=True)
+        assert len(results) == len(dataset)
+        # mock 模式下全部用例应通过
+        assert all(r["passed"] for r in results)
+
+    def test_compare_versions_no_regression(self):
+        """当前版本与 v0.1（同版本）对比，应无回归"""
+        current = [
+            {"employee_id": "E1", "period": "W1", "passed": True, "overall_score": 88},
+            {"employee_id": "E2", "period": "W1", "passed": True, "overall_score": 72},
+        ]
+        version = [
+            {"employee_id": "E1", "period": "W1", "passed": True, "overall_score": 88},
+            {"employee_id": "E2", "period": "W1", "passed": True, "overall_score": 72},
+        ]
+        report = compare_versions(current, version, "v0.1")
+        assert report["has_regression"] is False
+        assert report["pass_delta"] == 0
+        assert len(report["deltas"]) == 2
+
+    def test_compare_versions_detects_pass_regression(self):
+        """新候选由通过变失败 -> 回归"""
+        # current=新候选 failed，version=基线 passed -> 新候选比基线变差
+        current = [{"employee_id": "E1", "period": "W1", "passed": False, "overall_score": None}]
+        version = [{"employee_id": "E1", "period": "W1", "passed": True, "overall_score": 88}]
+        report = compare_versions(current, version, "v0.2")
+        assert report["has_regression"] is True
+        assert report["regressions"][0]["reason"].startswith("用例在新版本上由通过变为失败")
+
+    def test_compare_versions_detects_score_regression(self):
+        """新候选分数下降超过阈值 -> 回归"""
+        # current=新候选 70，version=基线 88 -> 新候选下降 18 超过阈值 5
+        current = [{"employee_id": "E1", "period": "W1", "passed": True, "overall_score": 70}]
+        version = [{"employee_id": "E1", "period": "W1", "passed": True, "overall_score": 88}]
+        report = compare_versions(current, version, "v0.2", score_delta_threshold=5.0)
+        assert report["has_regression"] is True
+        # 分数下降 18 超过阈值 5
+        assert any("分数下降" in r["reason"] for r in report["regressions"])
+
+    def test_compare_versions_score_improvement_not_regression(self):
+        """分数上升不算回归"""
+        current = [{"employee_id": "E1", "period": "W1", "passed": True, "overall_score": 88}]
+        version = [{"employee_id": "E1", "period": "W1", "passed": True, "overall_score": 72}]
+        # current 比 version 高 16（改进），不应判为回归
+        report = compare_versions(current, version, "v0.2")
+        assert report["has_regression"] is False
