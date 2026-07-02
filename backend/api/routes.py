@@ -61,6 +61,7 @@ class CreateEvaluationRequest(BaseModel):
 
 
 # 评估异步任务状态存储（生产环境应替换为 Redis / 数据库）
+# TODO Phase 6: 迁移至 Redis 任务队列,见 docs/architecture-notes.md
 job_store: Dict[str, Dict[str, Any]] = {}
 
 # 输入护栏单例：拦截 Prompt 注入、恶意指令、超大输入与不支持的附件类型

@@ -19,6 +19,17 @@ import pytest
 from eval import generate_dataset as gd
 from eval.generate_dataset import ARCHETYPES, PERIODS, generate_case, main
 
+# scripts/generate_dataset.py（M1 补完）模块导入，别名避免与 eval 模块符号冲突
+from scripts import generate_dataset as scripts_gd
+from scripts.generate_dataset import (
+    ARCHETYPES as SCRIPTS_ARCHETYPES,
+    DEPARTMENTS,
+    LEVELS,
+    PERIODS as SCRIPTS_PERIODS,
+    generate_case as scripts_generate_case,
+    generate_dataset as scripts_generate_dataset,
+)
+
 
 # 用例对象应包含的字段集合
 EXPECTED_CASE_KEYS = {
@@ -354,3 +365,221 @@ class TestDatasetConsistency:
         """50 条用例应覆盖全部 5 类 archetype（统计显著性）。"""
         seen = {c["archetype"] for c in loaded_dataset}
         assert seen == set(ARCHETYPES.keys())
+
+
+# ============================================================
+# 以下为 scripts/generate_dataset.py（M1 补完）模块测试
+# 与上方 eval/generate_dataset.py 测试共存，互不影响。
+# ============================================================
+
+
+class TestScriptsArchetypesConfig:
+    """scripts 模块 ARCHETYPES / DEPARTMENTS / LEVELS / PERIODS 配置完整性"""
+
+    EXPECTED_ARCHETYPES = {"star", "steady", "slacker", "newhire", "bottleneck"}
+
+    def test_all_five_archetypes_present(self):
+        """应包含任务要求的 5 类画像 star/steady/slacker/newhire/bottleneck。"""
+        assert set(SCRIPTS_ARCHETYPES.keys()) == self.EXPECTED_ARCHETYPES
+
+    @pytest.mark.parametrize("archetype", list(SCRIPTS_ARCHETYPES.keys()))
+    def test_archetype_structure(self, archetype):
+        """每个 archetype 配置包含 score_range / keywords / reports 三段。"""
+        info = SCRIPTS_ARCHETYPES[archetype]
+        assert set(info.keys()) == {"score_range", "keywords", "reports"}
+        low, high = info["score_range"]
+        assert 0 <= low <= high <= 100
+        assert isinstance(info["keywords"], list) and info["keywords"]
+        assert isinstance(info["reports"], list) and info["reports"]
+
+    @pytest.mark.parametrize("archetype", list(SCRIPTS_ARCHETYPES.keys()))
+    def test_archetype_score_range_within_bounds(self, archetype):
+        """每个 archetype 的 score_range ±5 必须落在 [0,100]，保证区间宽度恒为 10。"""
+        low, high = SCRIPTS_ARCHETYPES[archetype]["score_range"]
+        assert low - 5 >= 0
+        assert high + 5 <= 100
+
+    def test_departments_config(self):
+        """DEPARTMENTS 多部门配置存在且非空。"""
+        assert isinstance(DEPARTMENTS, list) and len(DEPARTMENTS) >= 2
+
+    def test_levels_config(self):
+        """LEVELS 多职级配置存在且非空。"""
+        assert isinstance(LEVELS, list) and len(LEVELS) >= 2
+
+    def test_periods_config(self):
+        """PERIODS 为 2026-W20 ~ 2026-W29。"""
+        assert SCRIPTS_PERIODS == [f"2026-W{i:02d}" for i in range(20, 30)]
+
+
+class TestScriptsGenerateDataset:
+    """scripts.generate_dataset 批量生成——数量、字段、画像覆盖、ID 唯一、分数合理"""
+
+    # 任务要求每条用例必须包含的字段（允许额外字段 department/level）
+    REQUIRED_CASE_KEYS = {
+        "employee_id",
+        "period",
+        "archetype",
+        "raw_inputs",
+        "expected_overall_score_range",
+        "expected_contains",
+        "expected_view_keys",
+    }
+    EXPECTED_VIEW_KEYS = ["summary", "growth_areas", "next_week_focus"]
+
+    def test_generate_dataset_default_count(self):
+        """generate_dataset() 默认生成 50 条。"""
+        cases = scripts_generate_dataset()
+        assert len(cases) == 50
+
+    @pytest.mark.parametrize("count", [0, 1, 5, 30, 100])
+    def test_generate_dataset_custom_count(self, count):
+        """指定 count 生成对应数量。"""
+        assert len(scripts_generate_dataset(count=count)) == count
+
+    def test_generate_dataset_negative_count_raises(self):
+        """负数 count 抛 ValueError。"""
+        with pytest.raises(ValueError):
+            scripts_generate_dataset(count=-1)
+
+    def test_generate_dataset_returns_list(self):
+        """返回类型为 list。"""
+        assert isinstance(scripts_generate_dataset(count=5), list)
+
+    def test_case_has_all_required_keys(self):
+        """每条用例包含全部必需字段（允许额外字段 department/level）。"""
+        cases = scripts_generate_dataset(count=10)
+        for case in cases:
+            assert self.REQUIRED_CASE_KEYS.issubset(
+                set(case.keys())
+            ), f"缺失字段: {self.REQUIRED_CASE_KEYS - set(case.keys())}"
+
+    def test_case_extra_fields_department_level(self):
+        """用例额外携带 department/level，体现多部门多职级支持。"""
+        cases = scripts_generate_dataset(count=10)
+        for case in cases:
+            assert "department" in case
+            assert "level" in case
+            assert case["department"] in DEPARTMENTS
+            assert case["level"] in LEVELS
+
+    def test_all_five_archetypes_covered(self):
+        """count=50 时 5 类画像全部出现（轮转抽样保证覆盖）。"""
+        cases = scripts_generate_dataset(count=50)
+        seen = {c["archetype"] for c in cases}
+        assert seen == {"star", "steady", "slacker", "newhire", "bottleneck"}
+
+    def test_all_archetypes_covered_min_count(self):
+        """count=5 时刚好每类出现一次（轮转）。"""
+        cases = scripts_generate_dataset(count=5)
+        seen = {c["archetype"] for c in cases}
+        assert seen == {"star", "steady", "slacker", "newhire", "bottleneck"}
+
+    def test_employee_ids_unique(self):
+        """50 条用例 employee_id 全部唯一。"""
+        cases = scripts_generate_dataset(count=50)
+        ids = [c["employee_id"] for c in cases]
+        assert len(ids) == len(set(ids))
+
+    def test_employee_ids_sequential(self):
+        """employee_id 按 E1001..E1050 顺序生成。"""
+        cases = scripts_generate_dataset(count=50)
+        assert [c["employee_id"] for c in cases] == [
+            f"E{1000 + i}" for i in range(1, 51)
+        ]
+
+    def test_score_range_reasonable(self):
+        """分数区间合理：宽度恒为 10、落在 [0,100]、中心落在对应 archetype 档位内。"""
+        cases = scripts_generate_dataset(count=50)
+        for case in cases:
+            low, high = case["expected_overall_score_range"]
+            assert 0 <= low <= high <= 100
+            assert high - low == 10
+            info = SCRIPTS_ARCHETYPES[case["archetype"]]
+            center = (low + high) / 2
+            assert info["score_range"][0] <= center <= info["score_range"][1]
+
+    def test_expected_contains_subset_of_report(self):
+        """expected_contains 必然是报告中真实命中的关键词子集。"""
+        cases = scripts_generate_dataset(count=50)
+        for case in cases:
+            assert len(case["expected_contains"]) <= 2
+            info = SCRIPTS_ARCHETYPES[case["archetype"]]
+            report = case["raw_inputs"][0]["content"]
+            present = {kw for kw in info["keywords"] if kw in report}
+            for kw in case["expected_contains"]:
+                assert kw in present, f"{case['employee_id']} 关键词 {kw} 未在报告中出现"
+
+    def test_expected_view_keys_constant(self):
+        """expected_view_keys 为固定常量。"""
+        cases = scripts_generate_dataset(count=5)
+        for case in cases:
+            assert case["expected_view_keys"] == self.EXPECTED_VIEW_KEYS
+
+    def test_period_in_periods(self):
+        """period 取自 PERIODS 配置。"""
+        cases = scripts_generate_dataset(count=20)
+        for case in cases:
+            assert case["period"] in SCRIPTS_PERIODS
+
+    def test_raw_inputs_structure(self):
+        """raw_inputs 为单元素列表，input_id 三位零填充。"""
+        cases = scripts_generate_dataset(count=5)
+        for i, case in enumerate(cases, start=1):
+            assert len(case["raw_inputs"]) == 1
+            item = case["raw_inputs"][0]
+            assert item["type"] == "daily_report"
+            assert isinstance(item["content"], str) and item["content"]
+
+    def test_departments_varied(self):
+        """50 条用例覆盖多个部门（多部门多样性）。"""
+        cases = scripts_generate_dataset(count=50)
+        deps = {c["department"] for c in cases}
+        assert len(deps) >= 2
+
+    def test_levels_varied(self):
+        """50 条用例覆盖多个职级（多职级多样性）。"""
+        cases = scripts_generate_dataset(count=50)
+        levels = {c["level"] for c in cases}
+        assert len(levels) >= 2
+
+
+class TestScriptsGenerateCase:
+    """scripts.generate_case 单条生成逻辑"""
+
+    def test_case_idx_one(self):
+        """idx=1 时 employee_id=E1001。"""
+        case = scripts_generate_case(1)
+        assert case["employee_id"] == "E1001"
+
+    def test_case_idx_zero(self):
+        """idx=0 时 employee_id=E1000，archetype 为列表首项。"""
+        case = scripts_generate_case(0)
+        assert case["employee_id"] == "E1000"
+        assert case["archetype"] == "star"
+
+    def test_case_idx_large(self):
+        """大 idx 不抛异常。"""
+        case = scripts_generate_case(9999)
+        assert case["employee_id"] == "E10999"
+
+    def test_case_archetype_rotation(self):
+        """archetype 按 idx 轮转，前 5 条刚好覆盖 5 类画像。"""
+        cases = [scripts_generate_case(i) for i in range(1, 6)]
+        archetypes = [c["archetype"] for c in cases]
+        assert sorted(archetypes) == sorted(
+            ["star", "steady", "slacker", "newhire", "bottleneck"]
+        )
+
+
+class TestScriptsDeterminism:
+    """可复现性：固定种子下 generate_dataset 输出稳定"""
+
+    def test_generate_dataset_deterministic(self):
+        """重置种子后两次 generate_dataset(50) 输出完全一致。"""
+        random.seed(42)
+        first = scripts_generate_dataset(count=50)
+        random.seed(42)
+        second = scripts_generate_dataset(count=50)
+        assert first == second
+

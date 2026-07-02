@@ -27,7 +27,12 @@
             <el-table-column prop="created_at" label="创建时间" />
             <el-table-column label="操作" width="280">
               <template #default="{ row }">
-                <el-button size="small" type="primary" @click="viewDetail(row)">
+                <el-button
+                  size="small"
+                  type="primary"
+                  aria-label="跳转到 HR 复核详情页"
+                  @click="viewDetail(row)"
+                >
                   查看详情
                 </el-button>
                 <el-button size="small" type="success" :loading="submitting" @click="approve(row)">
@@ -70,7 +75,8 @@ async function loadData() {
 }
 
 function viewDetail(row) {
-  router.push(`/manager/approval/${row.evaluation_id}`)
+  // 跳转到 HR 复核详情页(查看完整评估、审批历史、申诉记录并执行复核动作)
+  router.push(`/hr/audit/${row.evaluation_id}`)
 }
 
 async function approve(row) {

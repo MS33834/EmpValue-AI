@@ -106,6 +106,9 @@ npm install
 npm run dev
 ```
 
+> ⚠️ **Embedding 服务注意事项**
+> 系统的长期记忆基于 ChromaDB + Embedding 实现。**未配置 `EMBEDDING_API_KEY` 时，系统会自动回退到 `DummyEmbeddingFunction`（基于 md5 hash 的伪向量），该模式仅适合接口联调，检索结果无任何语义意义，不可用于真实检索与评估验证。生产环境必须配置真实的 Embedding 服务（如 OpenAI Embedding 或本地 Embedding 模型）。** 配置方式参见 `backend/.env.example` 与 [backend/README.md](backend/README.md)。
+
 ---
 
 ## 项目目录

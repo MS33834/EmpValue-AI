@@ -74,6 +74,13 @@ const routes = [
         component: () => import('@/views/hr/HRDashboard.vue'),
         meta: { title: 'HR复核' },
       },
+      {
+        // HR 复核详情页:查看评估完整内容、审批历史、申诉记录并执行复核动作
+        path: 'audit/:id',
+        name: 'HRAuditDetail',
+        component: () => import('@/views/hr/HRAuditDetail.vue'),
+        meta: { title: 'HR复核详情' },
+      },
     ],
   },
   {

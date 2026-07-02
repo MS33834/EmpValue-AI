@@ -119,6 +119,28 @@ alembic -c alembic.ini upgrade head
 
 > `backend/alembic.ini` 中的数据库连接串会被 `backend/alembic/env.py` 自动替换为 `backend/.env` 里的 `DATABASE_URL`。
 
+### 3.6 生产环境 Compose
+
+基础 `docker-compose.yml` 面向**开发与演示**:使用 SQLite、本地附件目录、无 GPU,开箱即用但不具备生产级数据持久化与扩展能力。生产部署应叠加 `docker-compose.prod.yml` override,补齐 PostgreSQL、MinIO、GPU 三项扩展。
+
+**启动命令(双文件叠加):**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+**override 提供的生产扩展:**
+
+| 扩展项 | 替代/增强 | 说明 |
+|---|---|---|
+| PostgreSQL (`postgres:15-alpine`) | 替代 SQLite | 生产关系型数据库,支持并发与备份;backend 的 `DATABASE_URL` 自动切换为 `postgresql+asyncpg://...` |
+| MinIO (`minio/minio:latest`) | 替代/补充本地附件目录 | S3 兼容对象存储,端口 9000(API)/9001(Console);附件目录暂保留本地挂载,待后端集成 S3 客户端后切换 |
+| NVIDIA GPU | 加速本地模型推理 | 通过 `deploy.resources.reservations.devices` 挂载,需先安装 NVIDIA Container Toolkit |
+
+**凭据注入:** PostgreSQL 与 MinIO 的默认凭据仅用于快速体验,生产环境务必通过 `backend/.env` 或外部密钥管理服务覆盖 `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`。
+
+> 本节与第四章"生产环境增强"呼应:第四章给出的是手动修改 `docker-compose.yml` 的零散示例,本节则提供已封装好的 override 文件,推荐优先使用 override 方式,避免污染基础 compose。
+
 ---
 
 ## 四、生产环境增强
@@ -355,6 +377,31 @@ docker compose up -d --build
 # 3. 验证健康检查
 curl http://localhost:8000/health
 ```
+
+### 7.4 任务队列与横向扩展
+
+> 本节说明当前任务队列的运行形态与横向扩展前置条件,指导生产容量规划。
+
+**当前形态(单实例):**
+
+- 评估任务通过后端进程内 `job_store`(内存态字典)管理,任务状态与结果保存在执行该任务的 backend 实例内存中;
+- 该形态**仅适合单实例部署**,无法跨多个 backend 副本共享任务状态;
+- `docker-compose.yml` 中的 `redis` 服务目前仅用于缓存预热/限流等场景,尚未承载任务队列(已为后续演进预留)。
+
+**横向扩展前置条件:**
+
+- 多副本部署(如 `docker compose up --scale backend=N`)前,必须先将 `job_store` 从进程内内存迁移至 Redis(或其它共享存储),否则不同副本间的任务状态将割裂,导致轮询 `/api/v1/evaluations/jobs/{job_id}` 时找不到任务;
+- 任务队列迁移至 Redis 已纳入项目计划 **Phase 6**(详见 `EmpValue-AI-Project-Plan.md`),迁移前请保持单实例部署。
+
+**单实例并发上限建议:**
+
+| 资源档位 | 建议并发评估数 | 说明 |
+|---|---|---|
+| CPU only(无 GPU) | ≤ 10 | 受本地 LLM 推理吞吐限制,且依赖云端模型时受 API 速率限制 |
+| 单卡 GPU(如 RTX 4090) | ≤ 50 | 本地 L2/L3 模型推理 + 云端 L0 兜底 |
+| 多卡 GPU / 云端为主 | ≤ 100 | 主要受云端 API 配额与数据库连接池约束 |
+
+> 超过上述上限时,应先完成 Redis 任务队列改造再扩容,避免内存态 `job_store` 成为瓶颈。
 
 ---
 

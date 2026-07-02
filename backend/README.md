@@ -168,8 +168,14 @@ python scripts/migrate.py revision -m "描述本次变更" --autogenerate
 ## 测试
 
 ```bash
-# 单元测试
+# 单元测试（默认跑批，pytest.ini 已通过 --ignore=tests/perf 自动排除性能测试）
 python -m pytest tests -q
+
+# 只跑 E2E 测试（pytest.ini 中注册了 e2e marker，需依赖运行中的服务）
+python -m pytest -m e2e -q
+
+# 只跑单测、显式排除 E2E
+python -m pytest --ignore=tests/e2e -q
 
 # 使用 Mock Provider 跑通评估流程（无需 API Key）
 python eval/evaluate.py --mock
@@ -177,9 +183,11 @@ python eval/evaluate.py --mock
 # E2E 测试（需安装 Playwright 浏览器）
 python -m pytest tests/e2e -q
 
-# 性能测试
+# 性能测试（locust 需单独起服务，不纳入常规跑批）
 locust -f tests/perf/locustfile.py
 ```
+
+> 备注：`pytest.ini` 中已配置 `addopts = --ignore=tests/perf`，即常规 `pytest tests` 会自动跳过 `tests/perf`；同时注册了 `e2e` marker，可用 `pytest -m e2e` 精确筛选 E2E 用例。`tests/perf` 为 locust 性能测试，需要先单独启动被测服务后再运行，故不纳入常规跑批。
 
 ---
 

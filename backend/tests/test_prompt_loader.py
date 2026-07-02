@@ -35,7 +35,8 @@ def test_version_unknown_when_no_header(tmp_path):
 
 
 def test_list_versions_returns_sorted(loader):
-    assert loader.list_versions("daily_evaluation") == ["v0.1"]
+    # v0.2 新增后，versions/ 目录下含 v0.1 与 v0.2 两个快照
+    assert loader.list_versions("daily_evaluation") == ["v0.1", "v0.2"]
 
 
 def test_list_versions_empty_when_no_versions_dir(tmp_path):
