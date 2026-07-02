@@ -2,7 +2,7 @@
   <div class="employee-feedback">
     <el-row :gutter="20">
       <el-col :span="10">
-        <el-card v-loading="loading">
+        <el-card v-loading="loading" :aria-busy="loading">
           <template #header>
             <span>我的评估列表</span>
           </template>

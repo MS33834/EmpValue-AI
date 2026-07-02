@@ -183,7 +183,8 @@ async function seedDemoUsers() {
 }
 .demo-tip {
   font-size: 12px;
-  color: #6b7280;
+  /* 无障碍：加深文字颜色，12px 小字需 ≥4.5:1 对比度（原 #6b7280 约 4.8:1 偏低，这里提升至约 7.5:1） */
+  color: #4b5563;
   text-align: center;
   line-height: 1.6;
 }

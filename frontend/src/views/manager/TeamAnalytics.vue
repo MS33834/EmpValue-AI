@@ -25,7 +25,10 @@
           <template #header>
             <span>团队成员得分对比</span>
           </template>
-          <v-chart class="bar-chart" :option="barOption" autoresize />
+          <!-- 无障碍：柱状图为纯图形，提供 role="img" 与文字摘要供屏幕阅读器读取 -->
+          <div role="img" :aria-label="barSummary">
+            <v-chart class="bar-chart" :option="barOption" autoresize />
+          </div>
         </el-card>
       </el-col>
       <el-col :span="8">
@@ -38,7 +41,7 @@
               title="团队平均得分"
               :value="analytics.overall_avg || 0"
               :precision="2"
-              value-style="color: #409eff"
+              value-style="color: #2563eb"
             />
             <p class="member-count">成员数：{{ members.length }}</p>
           </div>
@@ -87,6 +90,14 @@ const auth = useAuthStore()
 
 const members = computed(() => analytics.value.members || [])
 const hasData = computed(() => members.value.length > 0)
+
+// 无障碍：构造团队得分对比柱状图的文字替代描述
+const barSummary = computed(() => {
+  const items = members.value
+    .map((m) => `${m.employee_id} 平均${m.avg_score}分`)
+    .join('；')
+  return `团队成员得分对比柱状图，共${members.value.length}名成员：${items}`
+})
 
 const barOption = computed(() => ({
   tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },

@@ -1,6 +1,6 @@
 <template>
   <div class="admin-audit-logs">
-    <el-card v-loading="loading">
+    <el-card v-loading="loading" :aria-busy="loading">
       <template #header>
         <div class="card-header">
           <span>审计日志</span>

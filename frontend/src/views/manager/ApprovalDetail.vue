@@ -2,7 +2,7 @@
   <div class="approval-detail">
     <el-page-header @back="goBack" title="评估审批" />
 
-    <el-card v-if="evaluation" v-loading="loading" class="detail-card">
+    <el-card v-if="evaluation" v-loading="loading" :aria-busy="loading" class="detail-card">
       <template #header>
         <div class="card-header">
           <span>评估详情 — {{ evaluation.employee_id }} / {{ evaluation.period }}</span>
@@ -55,7 +55,8 @@
       </el-form>
     </el-card>
 
-    <el-skeleton v-else-if="loading" :rows="6" animated />
+    <!-- 无障碍：骨架屏加载态用 role=status 通告屏幕阅读器 -->
+    <el-skeleton v-else-if="loading" :rows="6" animated role="status" aria-label="评估详情加载中" />
 
     <el-empty v-else description="未找到评估数据" />
   </div>

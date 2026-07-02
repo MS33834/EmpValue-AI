@@ -2,7 +2,7 @@
   <div class="hr-dashboard">
     <el-row :gutter="20">
       <el-col :span="24">
-        <el-card v-loading="loading">
+        <el-card v-loading="loading" :aria-busy="loading">
           <template #header>
             <div class="card-header">
               <span>待复核队列（{{ evaluations.length }}）</span>

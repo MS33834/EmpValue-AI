@@ -7,7 +7,7 @@
 
       <el-form ref="formRef" label-position="top" :model="form" :rules="rules">
         <el-form-item label="评估周期" prop="period">
-          <el-input v-model="form.period" placeholder="例如：2026-W25" />
+          <el-input v-model="form.period" placeholder="例如：2026-W25" @keyup.enter="submit" />
         </el-form-item>
 
         <el-form-item label="日报内容" prop="content">
@@ -40,8 +40,11 @@
         </el-form-item>
       </el-form>
 
+      <!-- 无障碍：评估结果在轮询中动态更新，用 role=status + aria-live 通告屏幕阅读器 -->
       <el-result
         v-if="resultVisible"
+        role="status"
+        aria-live="polite"
         :icon="resultIcon"
         :title="resultTitle"
         :sub-title="resultSubtitle"

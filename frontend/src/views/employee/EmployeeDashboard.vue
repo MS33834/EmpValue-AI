@@ -2,14 +2,15 @@
   <div class="employee-dashboard">
     <el-row :gutter="20">
       <el-col :span="16">
-        <el-card v-loading="loading">
+        <el-card v-loading="loading" :aria-busy="loading">
           <template #header>
             <div class="card-header">
               <span>我的成长看板</span>
               <span v-if="latestEvaluation">{{ latestEvaluation.period }} · 得分 {{ latestEvaluation.overall_score }}</span>
             </div>
           </template>
-          <div v-if="latestEvaluation">
+          <!-- 无障碍：评估数据加载后用 role=status 通告屏幕阅读器 -->
+          <div v-if="latestEvaluation" role="status" aria-live="polite">
             <h3>评估总结</h3>
             <p class="summary">{{ employeeView.summary }}</p>
 
@@ -109,7 +110,8 @@ onMounted(loadData)
   margin-top: 4px;
 }
 .action {
-  color: #409eff;
+  /* 无障碍：#409eff 对白底约 2.8:1 不达标，改为对比度约 5.2:1 的深蓝 */
+  color: #2563eb;
   font-size: 13px;
   margin-top: 4px;
 }

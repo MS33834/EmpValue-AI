@@ -118,7 +118,8 @@ function handleLogout() {
   top: 0;
   z-index: 1000;
   padding: 8px 16px;
-  background: #409eff;
+  /* 无障碍：加深底色使白色文字对比度达到 AA（原 #409eff 对白文字仅约 2.8:1） */
+  background: #2563eb;
   color: #fff;
   border-radius: 0 0 4px 0;
   text-decoration: none;

@@ -9,7 +9,7 @@
               <el-button size="small" @click="loadData">刷新</el-button>
             </div>
           </template>
-          <el-table v-loading="loading" :data="pendingApprovals" style="width: 100%" empty-text="暂无待审批评估">
+          <el-table v-loading="loading" :aria-busy="loading" :data="pendingApprovals" style="width: 100%" empty-text="暂无待审批评估">
             <el-table-column prop="employee_id" label="员工ID" />
             <el-table-column prop="period" label="周期" />
             <el-table-column prop="overall_score" label="综合得分" sortable />
@@ -45,9 +45,10 @@
             <span>团队风险分布</span>
           </template>
           <div class="risk-summary">
-            <el-statistic title="高风险" :value="riskStats.high" value-style="color: #f56c6c" />
-            <el-statistic title="中风险" :value="riskStats.medium" value-style="color: #e6a23c" />
-            <el-statistic title="低风险" :value="riskStats.low" value-style="color: #67c23a" />
+            <!-- 无障碍：风险等级已由 title 文字传达，数值颜色加深以满足对比度要求 -->
+            <el-statistic title="高风险" :value="riskStats.high" value-style="color: #cf4444" />
+            <el-statistic title="中风险" :value="riskStats.medium" value-style="color: #b36a14" />
+            <el-statistic title="低风险" :value="riskStats.low" value-style="color: #3d7d10" />
           </div>
         </el-card>
       </el-col>

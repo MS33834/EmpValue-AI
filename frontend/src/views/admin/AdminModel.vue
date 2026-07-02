@@ -2,7 +2,7 @@
   <div class="admin-model">
     <el-row :gutter="20">
       <el-col :span="12">
-        <el-card v-loading="loading">
+        <el-card v-loading="loading" :aria-busy="loading">
           <template #header>
             <span>当前模型状态</span>
           </template>
@@ -25,7 +25,7 @@
       </el-col>
 
       <el-col :span="12">
-        <el-card v-loading="loading">
+        <el-card v-loading="loading" :aria-busy="loading">
           <template #header>
             <span>硬件信息</span>
           </template>

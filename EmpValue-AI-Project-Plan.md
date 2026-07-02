@@ -341,7 +341,7 @@ class EmployeeEvaluation(BaseModel):
 
 - [x] Vue3 搭建员工端、主管端、HR 端页面
 - [x] 对接 FastAPI，跑通“录入 → AI 清洗 → 审批 → 入库”全流程
-- [ ] UI/UX 走查与可访问性检查
+- [x] UI/UX 走查与可访问性检查（WCAG 2.1 AA：图表文字摘要、aria-live 动态通告、aria-busy、对比度达标、键盘可达；遗留 Element Plus primary 按钮主题色待统一）
 - [x] 前端端到端测试覆盖核心流程
 
 ### Phase 4：模拟数据、护栏与可观测性（2-3 周）

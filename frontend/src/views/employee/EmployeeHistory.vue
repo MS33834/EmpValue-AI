@@ -2,19 +2,17 @@
   <div class="employee-history">
     <el-row :gutter="20">
       <el-col :span="24">
-        <el-card v-loading="loading">
+        <el-card v-loading="loading" :aria-busy="loading">
           <template #header>
             <div class="card-header">
               <span>综合得分趋势</span>
               <el-button size="small" @click="loadData">刷新</el-button>
             </div>
           </template>
-          <v-chart
-            v-if="trendPeriods.length"
-            class="trend-chart"
-            :option="trendOption"
-            autoresize
-          />
+          <!-- 无障碍：趋势图为纯图形，提供 role="img" 与文字摘要供屏幕阅读器读取 -->
+          <div v-if="trendPeriods.length" role="img" :aria-label="trendSummary">
+            <v-chart class="trend-chart" :option="trendOption" autoresize />
+          </div>
           <el-empty v-else description="暂无历史评估数据" />
         </el-card>
       </el-col>
@@ -114,6 +112,14 @@ const trendPeriods = computed(() => {
 
 const trendScores = computed(() => {
   return [...evaluations.value].reverse().map((e) => e.overall_score)
+})
+
+// 无障碍：构造趋势折线图的文字替代描述
+const trendSummary = computed(() => {
+  const points = trendPeriods.value
+    .map((p, i) => `${p} ${trendScores.value[i]}分`)
+    .join('；')
+  return `综合得分趋势折线图，共${trendPeriods.value.length}个周期：${points}`
 })
 
 const trendOption = computed(() => ({
