@@ -335,7 +335,7 @@ class EmployeeEvaluation(BaseModel):
 - [x] 定义并实现 Agent 的 Tools 接口
 - [x] 接入 ChromaDB 长期记忆
 - [x] 完成 RBAC、审批流、审计日志
-- [ ] API 单元测试覆盖率 ≥ 70%（已建立测试集，待覆盖率基线确认）
+- [x] API 单元测试覆盖率 ≥ 70%（基线确认：460 passed，总覆盖率 93%，全部模块 ≥72%，prompt_loader 62%→100%）
 
 ### Phase 3：前端工程与数据闭环（3-4 周）
 
