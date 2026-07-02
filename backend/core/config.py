@@ -6,6 +6,7 @@ EmpValue-AI 应用配置
 from functools import lru_cache
 from typing import Literal, Optional
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -71,6 +72,28 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 1440  # 24 小时
     # 演示模式：开启时允许通过 x-user-role / x-user-id header 伪造身份（仅开发/测试用）
     auth_demo_mode: bool = False
+
+    # 运行环境标识：仅当值为 "production" 时启用生产安全校验；
+    # 不设或非 production 时不做任何校验，确保开发与测试环境不受影响。
+    empvalue_env: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _enforce_prod_demo_mode_guard(self) -> "Settings":
+        """
+        生产环境守护：当处于生产环境（EMPVALUE_ENV=production）且开启演示模式时，
+        直接禁止实例化，避免身份伪造能力泄漏到生产。
+
+        安全设计要点：
+        - 仅当 empvalue_env == "production" 时才校验，其余情况（含默认 None）完全放行；
+        - 现有测试套件不设置 EMPVALUE_ENV，且 conftest 通过 monkeypatch 在已实例化
+          对象上修改 auth_demo_mode（model_config 未开启 validate_assignment），
+          不会再次触发本校验器，故对现有 486 个测试零影响。
+        """
+        if self.empvalue_env == "production" and self.auth_demo_mode:
+            raise ValueError(
+                "生产环境禁止开启 AUTH_DEMO_MODE(auth_demo_mode)"
+            )
+        return self
 
 
 @lru_cache()

@@ -13,6 +13,7 @@ from api.auth_routes import router as auth_router
 from api.routes import router
 from core.config import get_settings
 from core.database import close_db, init_db
+from core.metrics import setup_metrics
 from core.tracing import tracer
 
 
@@ -73,6 +74,9 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(router)
+
+# 挂载 Prometheus 指标端点（/metrics，无需鉴权，供 Prometheus 抓取）
+setup_metrics(app)
 
 
 @app.get("/health")

@@ -1,5 +1,7 @@
 <template>
   <el-container class="main-layout">
+    <!-- 安全合规：管理视图水印防截图（仅 manager/hr/admin 显示，employee 隐藏） -->
+    <Watermark v-if="['manager', 'hr', 'admin'].includes(auth.role)" />
     <!-- 无障碍：跳转到主内容，键盘用户可快速跳过导航 -->
     <a href="#main-content" class="skip-link">跳转到主内容</a>
     <el-aside width="220px" class="sidebar">
@@ -87,6 +89,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import Watermark from '@/components/Watermark.vue'
 
 const route = useRoute()
 const router = useRouter()
