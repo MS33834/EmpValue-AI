@@ -1,6 +1,6 @@
 # EmpValue-AI 后端
 
-基于 Python 3.11 + FastAPI + LangGraph 构建的 AI 员工价值评估后端服务。
+后端服务。FastAPI 负责 REST 接口与 RBAC，LangGraph 跑评估状态机（含 interrupt 审批中断点），ModelRouter 按档位在本地与云端模型间分流。
 
 ---
 
@@ -43,21 +43,21 @@ backend/
 
 ## 本地开发
 
-### 1. 安装依赖
+### 安装依赖
 
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
 
-### 2. 配置环境变量
+### 配置环境变量
 
 ```bash
 cp .env.example .env
 # 编辑 .env，填入模型 API Key
 ```
 
-### 3. 启动服务
+### 启动服务
 
 ```bash
 uvicorn main:app --reload --port 8000

@@ -17,16 +17,16 @@ EmpValue-AI 是面向中大型企业的 AI 驱动员工价值量化与成长 Age
 
 ## 二、Phase 1-5 已交付成果(特色概括)
 
-> Phase 1-5 已全部完成并通过专家团队回溯审计,566 单测 + 16 E2E 全绿,覆盖率 93%,前端构建成功。以下为各阶段交付特色。
+> Phase 1-5 已全部完成并通过专家团队回溯审计：566 单测 + 16 E2E 全绿，覆盖率 93%，前端构建成功。各阶段交付如下。
 
-### Phase 1:Prompt 与 Schema 联调 ✅ 已完成
+### Phase 1:Prompt 与 Schema 联调（已完成）
 
 - **Pydantic v2 Schema 强约束**:`EmployeeEvaluation` 强制 evidence 引用(min_length=1 + ≥10 字符)、overall_score 0-100、双视角分离字段
 - **System Prompt 双视角语气分离**:员工视图建设性 + 管理视图尖锐诊断,同一节点生成保证逻辑一致
 - **50 条人工标注测试集**:`eval/dataset.json` 覆盖 5 类员工画像
 - **Prompt 工程规范 v1.0**:[docs/prompt-engineering-spec-v1.md](docs/prompt-engineering-spec-v1.md)
 
-### Phase 2:后端与 Agent 核心 ✅ 已完成
+### Phase 2:后端与 Agent 核心（已完成）
 
 - **LangGraph 双图工厂**:`create_evaluation_graph`(DB 状态机)+ `create_evaluation_graph_with_interrupt`(原生 interrupt 审批流)
 - **完整节点链**:input_sanitizer → data_cleaning → retrieve_context → build_prompt → call_llm → parse_output → manager_review_gate → manager_review / hr_audit → finalize
@@ -37,7 +37,7 @@ EmpValue-AI 是面向中大型企业的 AI 驱动员工价值量化与成长 Age
 - **35 个 API 端点**:inputs CRUD、异步评估 job、evaluations CRUD、approve/reject/feedback/appeal/re-evaluate、manager/hr 队列、admin 模型管理、LangGraph interrupt 流
 - **Alembic 迁移**:11 张表 + 索引 + 约束完整
 
-### Phase 3:前端工程与数据闭环 ✅ 已完成
+### Phase 3:前端工程与数据闭环（已完成）
 
 - **12 个 Vue3 视图**:员工(4:Dashboard/Input/History/Feedback)+ 主管(3:Dashboard/ApprovalDetail/TeamAnalytics)+ HR(2:Dashboard/AuditDetail)+ 管理员(2:Model/AuditLogs)+ Login
 - **WCAG 2.1 AA 可访问性**:图表 role="img" + 文字摘要、aria-live 动态通告、aria-busy、对比度 ≥4.5:1、键盘可达
@@ -46,7 +46,7 @@ EmpValue-AI 是面向中大型企业的 AI 驱动员工价值量化与成长 Age
 - **水印防截图组件**:manager/hr/admin 视图显示,canvas 生成含用户标识 + 时间的纹理,aria-hidden 不破坏可访问性
 - **E2E 16 测试**:Health/Auth/EmployeeFlow/EvaluationFlow/InterruptFlow/RBAC/HrAuditFlow/AppealFlow/FeedbackFlow/GuardrailFlow
 
-### Phase 4:模拟数据、护栏与可观测性 ✅ 已完成
+### Phase 4:模拟数据、护栏与可观测性（已完成）
 
 - **5 类员工画像 Mock 数据**:劳模/摸鱼/明星/新人/瓶颈期,`scripts/run_mock_evaluations.py` 跑通 LangGraph
 - **输入护栏 6 函数**:Prompt 注入(中/英)+ 编码绕过 + 零宽字符(NFKC + BYPASS_CHARS)+ base64/hex/url 解码 + 附件白名单
@@ -56,7 +56,7 @@ EmpValue-AI 是面向中大型企业的 AI 驱动员工价值量化与成长 Age
 - **Prometheus 指标**:6 业务指标(评估计数/耗时/审批流转/反馈/LLM 调用/活跃任务)+ `/metrics` 端点
 - **红队测试 50 用例 8 大类**:PromptInjection/Jailbreak/Bypass/Boundary/Bias/PII/Hallucination/Attachment + SchemaStability 50 次参数化
 
-### Phase 5:试点部署与迭代 ✅ 已完成
+### Phase 5:试点部署与迭代（已完成）
 
 - **试点 Runbook**:[docs/pilot-runbook.md](docs/pilot-runbook.md) 含 Go/No-Go 就绪清单、4 周执行节奏、反馈闭环、Prompt 门禁、回滚预案、退出标准
 - **反馈闭环工程化**:appeal 端点写 type=appeal 的 Feedback 记录,`/employees/{id}/feedback` 端点追踪申诉处理进度,前端反馈面板带状态映射
@@ -67,7 +67,7 @@ EmpValue-AI 是面向中大型企业的 AI 驱动员工价值量化与成长 Age
 - **企业部署手册**:[docs/deployment-guide.md](docs/deployment-guide.md) 含 docker-compose.prod.yml(PG/MinIO/GPU)
 - **安全合规白皮书**:[docs/security-compliance-whitepaper.md](docs/security-compliance-whitepaper.md) 13 项合规清单
 
-### 补完轮(回溯审计后) ✅ 已完成
+### 补完轮（回溯审计后，已完成）
 
 - **数据集生成脚本**:[scripts/generate_dataset.py](backend/scripts/generate_dataset.py) 5 类画像批量生成,CLI + 可 import
 - **Prompt v0.2 版本快照**:[prompts/versions/daily_evaluation_v0.2.md](backend/prompts/versions/daily_evaluation_v0.2.md),--compare 门禁演练通过
@@ -99,13 +99,15 @@ EmpValue-AI 是面向中大型企业的 AI 驱动员工价值量化与成长 Age
 
 #### 6.1 任务队列 Redis 化(解除单实例约束)
 
-- [ ] 调研并选定 Redis 任务队列方案(arq / redis-stream / celery),输出 ADR
-- [ ] 实现 `core/job_queue.py` 抽象层,兼容内存(测试)与 Redis(生产)双后端
-- [ ] 将 `api/routes.py` 的 `job_store: Dict` 迁移至 Redis 后端,保持 API 不变
-- [ ] 补 `tests/test_job_queue.py` 覆盖入队/出队/超时/重试/多 worker 竞争
-- [ ] 更新 docker-compose.prod.yml 启用 redis 消费,文档标注多副本部署可行
+- [x] 实现 `core/job_queue.py` 抽象层,兼容内存(测试)与 Redis(生产)双后端 (完成日期: 2026-07-02)
+- [x] 将 `api/routes.py` 的 `job_store: Dict` 迁移至 JobQueue,保持 API 不变 (完成日期: 2026-07-02)
+- [x] 补 `tests/test_job_queue.py` 覆盖入队/出队/更新/删除/工厂选择 (完成日期: 2026-07-02)
+- [x] docker-compose.prod.yml 启用 redis,docker-compose 已预留 redis 服务 (完成日期: 2026-07-02)
+- [ ] 输出任务队列 ADR(arq vs redis-stream 选型,当前用裸 redis.asyncio 实现)
 
 #### 6.2 真实 Embedding 接入与检索质量验证
+
+> 需真实 API Key,沙箱无法跑通,留待 Phase 7 真实模型联调阶段一并验证。
 
 - [ ] 接入真实 Embedding 服务(OpenAI text-embedding-3-small / 阿里云 / 本地 BGE)
 - [ ] 用 `eval/llm_judge.py` 跑一轮真实检索质量基线,记录 evidence 可溯源性分数
@@ -114,17 +116,18 @@ EmpValue-AI 是面向中大型企业的 AI 驱动员工价值量化与成长 Age
 
 #### 6.3 可观测性闭环(Prometheus + Grafana)
 
-- [ ] 在 approval_service / evaluation_service / agent 节点埋点调用 `core/metrics.py` 便捷函数
-- [ ] 编写 Grafana Dashboard JSON(评估吞吐/耗时分布/审批流转/LLM 调用成功率/活跃任务)
+- [x] 在 approval_service / evaluation_service / feedback 端点埋点调用 `core/metrics.py` 便捷函数 (完成日期: 2026-07-02)
+- [x] 编写 Grafana Dashboard JSON(评估吞吐/耗时分布/审批流转/LLM 调用/活跃任务) (完成日期: 2026-07-02)
 - [ ] docker-compose.prod.yml 增加 grafana 服务,预置 Dashboard + Prometheus 数据源
 - [ ] 文档补充告警规则(评估失败率 >5%、P99 >3s、LLM 调用失败率 >10%)
 
 #### 6.4 CI/CD 流水线
 
-- [ ] 配置 GitHub Actions:lint(ruff/black)+ 单测 + 前端构建 + --compare Prompt 门禁
+- [x] 配置 GitHub Actions:lint(ruff)+ 单测 + 前端构建 + --compare Prompt 门禁 (完成日期: 2026-07-02)
+- [x] 加 pre-commit hook(ruff/black/eslint/prettier,渐进式仅检查暂存文件) (完成日期: 2026-07-02)
+- [x] 生成 CHANGELOG.md(Keep a Changelog 格式,v1.0.0 记录 Phase 1-6) (完成日期: 2026-07-02)
+- [ ] 发布 v1.0.0 tag(待 CI 首次绿后打)
 - [ ] 配置 GitCode CI(或镜像 GitHub Actions)
-- [ ] 加 pre-commit hook(ruff/black/eslint/prettier)
-- [ ] 发布 v1.0.0 tag,生成 CHANGELOG
 
 ### Phase 7:真实模型联调与质量基线
 
@@ -250,4 +253,4 @@ EmpValue-AI 是面向中大型企业的 AI 驱动员工价值量化与成长 Age
 
 ---
 
-> 本文档为活文档,随项目演进持续更新。每次更新同步推送两个仓库,确保进度实时可见。
+> 活文档，随项目演进持续更新；每次更新同步推送两个仓库。

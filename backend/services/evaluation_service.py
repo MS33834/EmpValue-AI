@@ -4,6 +4,7 @@
 事务边界统一由路由层控制：service 层方法不 commit，仅 add/update 后返回。
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -11,8 +12,20 @@ from typing import Dict, List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import CompanyKB, DimensionScore, Evaluation, EvidenceRef, Feedback, Memory, RawInput, User
+from core.metrics import observe_evaluation_duration, record_evaluation
+from models import (
+    CompanyKB,
+    DimensionScore,
+    Evaluation,
+    EvidenceRef,
+    Feedback,
+    Memory,
+    RawInput,
+    User,
+)
 from models.constants import EvaluationStatus
+
+logger = logging.getLogger(__name__)
 
 
 class EvaluationService:
@@ -90,6 +103,21 @@ class EvaluationService:
                 self.session.add(ref)
 
         await self.session.flush()
+        # 业务埋点:评估完成量与耗时分布,model_tier/processing_time_ms 来自 audit
+        # 埋点失败不影响评估落库主流程
+        try:
+            audit = evaluation_data.get("audit", {}) or {}
+            model_tier = audit.get("model_tier") or "unknown"
+            processing_ms = audit.get("processing_time_ms")
+            record_evaluation(
+                evaluation_data.get("status", EvaluationStatus.AI_DRAFTED), model_tier
+            )
+            if isinstance(processing_ms, (int, float)) and processing_ms >= 0:
+                observe_evaluation_duration(processing_ms / 1000.0, model_tier)
+        except Exception:
+            logger.exception(
+                "评估埋点失败 evaluation_id=%s", evaluation_data.get("evaluation_id")
+            )
         return evaluation
 
     async def get_evaluation(self, evaluation_id: str) -> Optional[Evaluation]:
@@ -98,7 +126,9 @@ class EvaluationService:
         )
         return result.scalar_one_or_none()
 
-    async def get_evaluation_for_update(self, evaluation_id: str) -> Optional[Evaluation]:
+    async def get_evaluation_for_update(
+        self, evaluation_id: str
+    ) -> Optional[Evaluation]:
         """带悲观锁的评估查询，用于状态转换等需要避免竞态的场景"""
         result = await self.session.execute(
             select(Evaluation)
@@ -124,7 +154,10 @@ class EvaluationService:
             evaluation.approved_at = datetime.now(timezone.utc)
             if approver_id:
                 evaluation.approver_id = approver_id
-        elif old_status == EvaluationStatus.APPROVED and new_status != EvaluationStatus.APPROVED:
+        elif (
+            old_status == EvaluationStatus.APPROVED
+            and new_status != EvaluationStatus.APPROVED
+        ):
             # 离开 approved 状态时重置审批信息
             evaluation.approved_at = None
             evaluation.approver_id = None
@@ -143,16 +176,25 @@ class EvaluationService:
         if not evaluation:
             return None
         old_status = evaluation.status
-        evaluation.employee_view = evaluation_data.get("employee_view", evaluation.employee_view)
-        evaluation.manager_view = evaluation_data.get("manager_view", evaluation.manager_view)
+        evaluation.employee_view = evaluation_data.get(
+            "employee_view", evaluation.employee_view
+        )
+        evaluation.manager_view = evaluation_data.get(
+            "manager_view", evaluation.manager_view
+        )
         evaluation.audit = evaluation_data.get("audit", evaluation.audit)
-        evaluation.overall_score = evaluation_data.get("overall_score", evaluation.overall_score)
+        evaluation.overall_score = evaluation_data.get(
+            "overall_score", evaluation.overall_score
+        )
         evaluation.status = evaluation_data.get("status", evaluation.status)
 
         new_status = evaluation.status
         if new_status == EvaluationStatus.APPROVED:
             evaluation.approved_at = datetime.now(timezone.utc)
-        elif old_status == EvaluationStatus.APPROVED and new_status != EvaluationStatus.APPROVED:
+        elif (
+            old_status == EvaluationStatus.APPROVED
+            and new_status != EvaluationStatus.APPROVED
+        ):
             evaluation.approved_at = None
             evaluation.approver_id = None
 
@@ -165,7 +207,12 @@ class EvaluationService:
         limit: int = 100,
         offset: int = 0,
     ) -> List[Evaluation]:
-        stmt = select(Evaluation).order_by(Evaluation.created_at.desc()).limit(limit).offset(offset)
+        stmt = (
+            select(Evaluation)
+            .order_by(Evaluation.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         if employee_id:
             stmt = stmt.where(Evaluation.employee_id == employee_id)
         if status:
@@ -211,15 +258,11 @@ class EvaluationService:
         return result.all()
 
     async def get_user(self, user_id: str) -> Optional[User]:
-        result = await self.session.execute(
-            select(User).where(User.user_id == user_id)
-        )
+        result = await self.session.execute(select(User).where(User.user_id == user_id))
         return result.scalar_one_or_none()
 
     async def get_user_by_email(self, email: str) -> Optional[User]:
-        result = await self.session.execute(
-            select(User).where(User.email == email)
-        )
+        result = await self.session.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
     async def create_user(self, data: Dict) -> User:
@@ -236,11 +279,15 @@ class EvaluationService:
         await self.session.flush()
         return user
 
-    async def ensure_user_exists(self, user_id: str, name: str = "", role: str = "employee") -> User:
+    async def ensure_user_exists(
+        self, user_id: str, name: str = "", role: str = "employee"
+    ) -> User:
         user = await self.get_user(user_id)
         if user:
             return user
-        return await self.create_user({"user_id": user_id, "name": name or user_id, "role": role})
+        return await self.create_user(
+            {"user_id": user_id, "name": name or user_id, "role": role}
+        )
 
     async def get_employee_history(
         self,
@@ -296,7 +343,12 @@ class EvaluationService:
                 scored.append((score, doc))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [
-            {"kb_id": d.kb_id, "title": d.title, "content": d.content, "metadata": d.metadata_}
+            {
+                "kb_id": d.kb_id,
+                "title": d.title,
+                "content": d.content,
+                "metadata": d.metadata_,
+            }
             for _, d in scored[:top_k]
         ]
 
@@ -334,7 +386,7 @@ class EvaluationService:
                 }
                 for row in rows
             ],
-            "overall_avg": round(
-                sum(r.avg_score or 0 for r in rows) / len(rows), 2
-            ) if rows else 0,
+            "overall_avg": (
+                round(sum(r.avg_score or 0 for r in rows) / len(rows), 2) if rows else 0
+            ),
         }

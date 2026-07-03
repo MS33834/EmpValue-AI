@@ -80,7 +80,7 @@ class LLMJudge:
             "overall_score": overall_score,
         }
 
-    # ---- LLMJudge 内部辅助：构造 prompt + 调用并解析 LLM 返回 ----
+    # LLMJudge 内部辅助：构造 prompt + 调用并解析 LLM 返回
 
     def _build_evidence_prompt(self, eval_result: dict, raw_inputs: list) -> str:
         evidence_items = self._collect_evidence(eval_result)

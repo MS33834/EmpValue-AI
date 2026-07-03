@@ -8,12 +8,12 @@
 
 ## 一、目标
 
-本规范定义 EmpValue-AI 项目中 Prompt 的设计、开发、测试、版本管理与上线流程，确保：
+这份规范管的是 Prompt 怎么设计、怎么改、怎么上线。四条硬要求：
 
-1. LLM 输出严格符合 [Pydantic Schema](../backend/schemas/evaluation.py)；
-2. 员工视图与管理视图的语气严格分离；
-3. 所有结论都有可追溯的证据；
-4. Prompt 变更可回归、可审计。
+1. LLM 输出必须能过 [Pydantic Schema](../backend/schemas/evaluation.py) 校验；
+2. 员工视图和管理视图的语气严格分离，不能串；
+3. 每条结论都要带原始证据，能追溯；
+4. Prompt 改动必须可回归、可审计，禁止偷偷改完直接上。
 
 ---
 
@@ -177,8 +177,4 @@ python eval/evaluate.py
 
 ---
 
-**下一步：**
-
-1. 将当前 3 条测试用例扩展至 50 条；
-2. 在 LM Studio 部署 Qwen2.5-7B-Instruct 并跑通真实 LLM 推理；
-3. 根据真实输出迭代 Prompt 至 v0.2。
+接下来要做的：把测试集从 3 条扩到 50 条；在 LM Studio 跑通 Qwen2.5-7B-Instruct 的真实推理；再根据真实输出把 Prompt 迭代到 v0.2。

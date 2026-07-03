@@ -19,8 +19,15 @@ from api.deps import (
     get_evaluation_service,
 )
 from auth.rbac import Role, can_access, get_client_ip, get_current_user_id, require_role
+from core.config import get_settings
 from core.database import get_db
 from core.guards import InputGuard
+from core.job_queue import JobQueue, create_job_queue
+from core.metrics import (
+    record_approval_transition,
+    record_evaluation,
+    record_feedback,
+)
 from core.tracing import tracer
 from models.constants import EvaluationStatus
 from services.approval_service import ApprovalService
@@ -60,20 +67,38 @@ class CreateEvaluationRequest(BaseModel):
     raw_inputs: List[RawInputItem] = Field(default_factory=list, max_length=50)
 
 
-# 评估异步任务状态存储（生产环境应替换为 Redis / 数据库）
-# TODO Phase 6: 迁移至 Redis 任务队列,见 docs/architecture-notes.md
-job_store: Dict[str, Dict[str, Any]] = {}
+# 异步评估任务队列:配置 redis_url 走 Redis(多实例),否则内存(测试/本地默认)
+# job_store 作为向后兼容 shim 保留:conftest 同步调用 job_store.clear() 做测试间状态清理,
+# 而 JobQueue.clear 是 async,这里包一层同步 clear 直清 InMemory 内部 dict
+job_queue: JobQueue = create_job_queue(get_settings())
+
+
+class _JobStoreCompat:
+    """job_store 向后兼容 shim:仅服务于测试 conftest 的同步 .clear() 调用。
+    业务代码应直接用 job_queue 的 async 接口。"""
+
+    def __init__(self, queue: JobQueue) -> None:
+        self._queue = queue
+
+    def clear(self) -> None:
+        store = getattr(self._queue, "_store", None)
+        if isinstance(store, dict):
+            store.clear()
+
+    def __getattr__(self, name: str):
+        # 其余属性透传给底层队列,保持向后引用兼容
+        return getattr(self._queue, name)
+
+
+job_store = _JobStoreCompat(job_queue)
 
 # 输入护栏单例：拦截 Prompt 注入、恶意指令、超大输入与不支持的附件类型
 _input_guard = InputGuard()
 
 
-def _update_job(job_id: str, update: Dict[str, Any]) -> None:
-    """更新任务状态"""
-    job = job_store.get(job_id)
-    if job:
-        job.update(update)
-        job["updated_at"] = datetime.now(timezone.utc).isoformat()
+async def _update_job(job_id: str, update: Dict[str, Any]) -> None:
+    """更新任务状态(浅合并 + 刷新 updated_at,语义对齐原 Dict 实现)"""
+    await job_queue.update(job_id, update)
 
 
 async def _run_evaluation_job(
@@ -102,15 +127,21 @@ async def _run_evaluation_job(
                 name="create_evaluation_async",
                 evaluation_id=None,
                 employee_id=employee_id,
-                metadata={"period": period, "input_count": len(raw_inputs), "job_id": job_id},
+                metadata={
+                    "period": period,
+                    "input_count": len(raw_inputs),
+                    "job_id": job_id,
+                },
             ) as trace:
                 with tracer.span(trace, "run_graph", input_data=initial_state):
                     result = await graph.ainvoke(initial_state)
 
                 if result.get("error"):
                     trace.update(metadata={**trace.metadata, "error": result["error"]})
-                    logger.error("评估图执行失败 job_id=%s: %s", job_id, result["error"])
-                    _update_job(
+                    logger.error(
+                        "评估图执行失败 job_id=%s: %s", job_id, result["error"]
+                    )
+                    await _update_job(
                         job_id,
                         {
                             "status": "failed",
@@ -136,7 +167,9 @@ async def _run_evaluation_job(
                         evaluation["status"] = EvaluationStatus.HR_AUDIT
                     memory_payload = {
                         "period": period,
-                        "summary": evaluation.get("employee_view", {}).get("summary", ""),
+                        "summary": evaluation.get("employee_view", {}).get(
+                            "summary", ""
+                        ),
                         "overall_score": evaluation.get("overall_score"),
                         "status": evaluation.get("status"),
                     }
@@ -155,10 +188,13 @@ async def _run_evaluation_job(
                         action="create_evaluation_async",
                         evaluation_id=evaluation.get("evaluation_id"),
                         employee_id=employee_id,
-                        details={"period": period, "model_tier": evaluation.get("audit", {}).get("model_tier")},
+                        details={
+                            "period": period,
+                            "model_tier": evaluation.get("audit", {}).get("model_tier"),
+                        },
                     )
                     await session.commit()
-                    _update_job(
+                    await _update_job(
                         job_id,
                         {
                             "status": "completed",
@@ -166,14 +202,18 @@ async def _run_evaluation_job(
                         },
                     )
                 else:
-                    _update_job(job_id, {"status": "failed", "error": "未生成评估结果"})
+                    await _update_job(
+                        job_id, {"status": "failed", "error": "未生成评估结果"}
+                    )
         except Exception as e:
             logger.exception("评估处理失败 job_id=%s", job_id)
             try:
                 await session.rollback()
             except Exception:
                 logger.exception("评估失败回滚事务失败 job_id=%s", job_id)
-            _update_job(job_id, {"status": "failed", "error": "评估处理失败，请查看服务端日志"})
+            await _update_job(
+                job_id, {"status": "failed", "error": "评估处理失败，请查看服务端日志"}
+            )
 
 
 @router.post("/inputs", response_model=Dict[str, Any])
@@ -183,7 +223,9 @@ async def create_input(
     eval_service: EvaluationService = Depends(get_evaluation_service),
     audit_service: AuditService = Depends(get_audit_service),
     session: AsyncSession = Depends(get_db),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """提交员工日报/任务进度等原始输入"""
     employee_id = payload.employee_id
@@ -260,7 +302,9 @@ async def list_inputs(
     employee_id: Optional[str] = None,
     period: Optional[str] = None,
     eval_service: EvaluationService = Depends(get_evaluation_service),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """查询原始输入列表"""
     # employee 只能查看自己的输入
@@ -288,7 +332,9 @@ async def get_input(
     input_id: str,
     request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """查询原始输入"""
     raw = await eval_service.get_raw_input(input_id)
@@ -298,7 +344,9 @@ async def get_input(
     if role == Role.EMPLOYEE:
         current_user_id = get_current_user_id(request)
         if raw.employee_id != current_user_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该输入")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该输入"
+            )
     return {
         "input_id": raw.input_id,
         "employee_id": raw.employee_id,
@@ -318,7 +366,9 @@ async def create_evaluation(
     app_state: AppState = Depends(get_app_state),
     eval_service: EvaluationService = Depends(get_evaluation_service),
     session: AsyncSession = Depends(get_db),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """异步触发一次员工评估，立即返回 job_id"""
     employee_id = payload.employee_id
@@ -349,7 +399,9 @@ async def create_evaluation(
 
     # 如果没有传入 raw_inputs，从数据库拉取
     if not raw_inputs:
-        inputs = await eval_service.list_raw_inputs(employee_id=employee_id, period=period)
+        inputs = await eval_service.list_raw_inputs(
+            employee_id=employee_id, period=period
+        )
         raw_inputs = [
             {"input_id": i.input_id, "type": i.type, "content": i.content}
             for i in inputs
@@ -358,14 +410,17 @@ async def create_evaluation(
     await session.commit()
 
     job_id = f"job-{uuid.uuid4().hex[:12]}"
-    job_store[job_id] = {
-        "job_id": job_id,
-        "status": "pending",
-        "employee_id": employee_id,
-        "period": period,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    await job_queue.enqueue(
+        job_id,
+        {
+            "job_id": job_id,
+            "status": "pending",
+            "employee_id": employee_id,
+            "period": period,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
     background_tasks.add_task(
         _run_evaluation_job,
@@ -383,17 +438,21 @@ async def create_evaluation(
 async def get_evaluation_job(
     job_id: str,
     request: Request,
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """查询异步评估任务状态"""
-    job = job_store.get(job_id)
+    job = await job_queue.get(job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
     # employee 只能查看自己的任务
     if role == Role.EMPLOYEE:
         current_user_id = get_current_user_id(request)
         if job.get("employee_id") != current_user_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该任务")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该任务"
+            )
     return job
 
 
@@ -401,7 +460,9 @@ async def get_evaluation_job(
 async def get_evaluation(
     evaluation_id: str,
     request: Request,
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
     eval_service: EvaluationService = Depends(get_evaluation_service),
 ):
     """获取评估结果，按角色过滤可见字段"""
@@ -412,7 +473,9 @@ async def get_evaluation(
     if role == Role.EMPLOYEE:
         current_user_id = get_current_user_id(request)
         if evaluation.employee_id != current_user_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该评估")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该评估"
+            )
 
     data = {
         "evaluation_id": evaluation.evaluation_id,
@@ -421,7 +484,9 @@ async def get_evaluation(
         "overall_score": evaluation.overall_score,
         "status": evaluation.status,
         "created_at": evaluation.created_at.isoformat(),
-        "approved_at": evaluation.approved_at.isoformat() if evaluation.approved_at else None,
+        "approved_at": (
+            evaluation.approved_at.isoformat() if evaluation.approved_at else None
+        ),
         "approver_id": evaluation.approver_id,
     }
 
@@ -439,7 +504,9 @@ async def get_evaluation(
 async def get_employee_view(
     evaluation_id: str,
     request: Request,
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
     eval_service: EvaluationService = Depends(get_evaluation_service),
 ):
     """员工可见视图"""
@@ -450,7 +517,9 @@ async def get_employee_view(
     if role == Role.EMPLOYEE:
         current_user_id = get_current_user_id(request)
         if evaluation.employee_id != current_user_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该评估")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该评估"
+            )
     return {
         "evaluation_id": evaluation.evaluation_id,
         "employee_id": evaluation.employee_id,
@@ -565,7 +634,11 @@ async def reject_evaluation(
             actor_id=actor_id,
             action="reject_evaluation",
             evaluation_id=evaluation_id,
-            details={"from_status": current_status, "to_status": new_status, "comment": comment},
+            details={
+                "from_status": current_status,
+                "to_status": new_status,
+                "comment": comment,
+            },
             ip_address=get_client_ip(request),
         )
         await session.commit()
@@ -583,7 +656,9 @@ async def create_feedback(
     eval_service: EvaluationService = Depends(get_evaluation_service),
     audit_service: AuditService = Depends(get_audit_service),
     session: AsyncSession = Depends(get_db),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """员工反馈/申诉"""
     evaluation = await eval_service.get_evaluation(evaluation_id)
@@ -593,7 +668,9 @@ async def create_feedback(
     if role == Role.EMPLOYEE:
         current_user_id = get_current_user_id(request)
         if evaluation.employee_id != current_user_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该评估")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该评估"
+            )
 
     content = payload.get("content")
     feedback_type = payload.get("type", "feedback")
@@ -624,6 +701,11 @@ async def create_feedback(
         ip_address=get_client_ip(request),
     )
     await session.commit()
+    # 业务埋点:反馈量按类型计数,失败不影响主流程
+    try:
+        record_feedback(feedback_type)
+    except Exception:
+        logger.exception("record_feedback 埋点失败 type=%s", feedback_type)
 
     return {
         "feedback_id": feedback.feedback_id,
@@ -671,7 +753,9 @@ def _serialize_feedback_row(feedback, evaluation) -> Dict[str, Any]:
             "overall_score": evaluation.overall_score,
             "status": evaluation.status,
             "created_at": evaluation.created_at.isoformat(),
-            "approved_at": evaluation.approved_at.isoformat() if evaluation.approved_at else None,
+            "approved_at": (
+                evaluation.approved_at.isoformat() if evaluation.approved_at else None
+            ),
         },
     }
 
@@ -681,7 +765,9 @@ async def list_evaluation_feedback(
     evaluation_id: str,
     request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """查询某评估下的反馈/申诉记录（员工仅可查自己的评估）"""
     rows = await eval_service.list_feedback(evaluation_id=evaluation_id, limit=200)
@@ -701,7 +787,9 @@ async def list_employee_feedback(
     employee_id: str,
     request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """查询员工的反馈/申诉记录及其关联评估当前状态，用于追踪申诉处理进度"""
     if role == Role.EMPLOYEE:
@@ -747,7 +835,9 @@ async def get_manager_dashboard(
     pending = []
     for status in (EvaluationStatus.AI_DRAFTED, EvaluationStatus.MANAGER_REVIEW):
         pending.extend(await eval_service.list_evaluations(status=status, limit=200))
-    approved = await eval_service.list_evaluations(status=EvaluationStatus.APPROVED, limit=10)
+    approved = await eval_service.list_evaluations(
+        status=EvaluationStatus.APPROVED, limit=10
+    )
     return {
         "pending_count": len(pending),
         "pending": [
@@ -779,7 +869,9 @@ async def get_hr_audit_queue(
     role: Role = Depends(require_role(Role.HR, Role.ADMIN)),
 ):
     """HR 复核队列"""
-    audits = await eval_service.list_evaluations(status=EvaluationStatus.HR_AUDIT, limit=200)
+    audits = await eval_service.list_evaluations(
+        status=EvaluationStatus.HR_AUDIT, limit=200
+    )
     return {
         "pending": [
             {
@@ -826,7 +918,11 @@ async def request_hr_review(
             actor_id=actor_id,
             action="request_hr_review",
             evaluation_id=evaluation_id,
-            details={"from_status": current_status, "to_status": new_status, "comment": comment},
+            details={
+                "from_status": current_status,
+                "to_status": new_status,
+                "comment": comment,
+            },
             ip_address=get_client_ip(request),
         )
         await session.commit()
@@ -845,7 +941,9 @@ async def appeal_evaluation(
     approval_service: ApprovalService = Depends(get_approval_service),
     audit_service: AuditService = Depends(get_audit_service),
     session: AsyncSession = Depends(get_db),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """员工对 approved/rejected 评估提出申诉，回到 manager_review"""
     evaluation = await eval_service.get_evaluation(evaluation_id)
@@ -884,10 +982,19 @@ async def appeal_evaluation(
             actor_id=actor_id,
             action="appeal_evaluation",
             evaluation_id=evaluation_id,
-            details={"from_status": current_status, "to_status": new_status, "comment": comment},
+            details={
+                "from_status": current_status,
+                "to_status": new_status,
+                "comment": comment,
+            },
             ip_address=get_client_ip(request),
         )
         await session.commit()
+        # 业务埋点:申诉量计数
+        try:
+            record_feedback("appeal")
+        except Exception:
+            logger.exception("record_feedback 埋点失败 type=appeal")
         return {"evaluation_id": evaluation_id, "status": new_status}
     except ValueError as e:
         await session.rollback()
@@ -962,7 +1069,9 @@ async def re_evaluate(
 
     # 覆盖旧 evaluation_id，保留历史审计
     new_eval["evaluation_id"] = evaluation_id
-    await eval_service.update_evaluation(evaluation_id=evaluation_id, evaluation_data=new_eval)
+    await eval_service.update_evaluation(
+        evaluation_id=evaluation_id, evaluation_data=new_eval
+    )
 
     # 高风险自动路由：通过状态机将 ai_drafted → hr_audit
     routing = result.get("status")
@@ -990,7 +1099,11 @@ async def re_evaluate(
     )
     await session.commit()
 
-    return {"evaluation_id": evaluation_id, "status": new_eval["status"], "feedback_processed": len(feedback_items)}
+    return {
+        "evaluation_id": evaluation_id,
+        "status": new_eval["status"],
+        "feedback_processed": len(feedback_items),
+    }
 
 
 @router.get("/employees/{employee_id}/dashboard")
@@ -998,7 +1111,9 @@ async def get_employee_dashboard(
     employee_id: str,
     request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """员工个人成长看板"""
     if role == Role.EMPLOYEE:
@@ -1040,7 +1155,9 @@ async def get_employee_history(
     employee_id: str,
     request: Request,
     eval_service: EvaluationService = Depends(get_evaluation_service),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """跨周期能力演进"""
     if role == Role.EMPLOYEE:
@@ -1198,7 +1315,9 @@ def _get_or_create_interrupt_graph(app_state: AppState):
 async def create_evaluation_with_interrupt(
     payload: Dict[str, Any],
     app_state: AppState = Depends(get_app_state),
-    role: Role = Depends(require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)),
+    role: Role = Depends(
+        require_role(Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN)
+    ),
 ):
     """
     启动带原生 interrupt 的评估工作流。
@@ -1237,7 +1356,9 @@ async def create_evaluation_with_interrupt(
     # 检查是否在 interrupt 处暂停
     interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
     if interrupts:
-        interrupt_info = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
+        interrupt_info = (
+            interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
+        )
         if isinstance(interrupt_info, str):
             interrupt_info = {"message": interrupt_info}
         thread_store[thread_id] = {
@@ -1360,7 +1481,9 @@ async def resume_interrupt(
     # 恢复后可能再次中断（如 manager_review → hr_audit）
     interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
     if interrupts:
-        interrupt_info = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
+        interrupt_info = (
+            interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
+        )
         if isinstance(interrupt_info, str):
             interrupt_info = {"message": interrupt_info}
         meta["status"] = "awaiting_review"
@@ -1385,7 +1508,10 @@ async def resume_interrupt(
     parsed = result.get("parsed_evaluation")
 
     # 持久化评估结果到数据库，成功后再更新内存中的线程状态，避免 DB 失败但内存已标记为完成
-    if parsed and final_status in (EvaluationStatus.APPROVED, EvaluationStatus.REJECTED):
+    if parsed and final_status in (
+        EvaluationStatus.APPROVED,
+        EvaluationStatus.REJECTED,
+    ):
         try:
             await eval_service.create_evaluation(parsed)
             await audit_service.log(

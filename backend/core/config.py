@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # 数据库：默认 SQLite（异步），生产可改为 postgresql+asyncpg://...
     database_url: str = "sqlite+aiosqlite:///./empvalue_ai.db"
 
+    # 任务队列 Redis：配置后启用 RedisJobQueue,多实例共享异步评估任务状态
+    # 留空则降级为 InMemoryJobQueue(单实例,测试与本地开发默认)
+    redis_url: Optional[str] = None
+
     # 模型档位强制设定，可选 auto / L0 / L1 / L2 / L3
     model_tier: Literal["auto", "L0", "L1", "L2", "L3"] = "auto"
 
@@ -90,9 +94,7 @@ class Settings(BaseSettings):
           不会再次触发本校验器，故对现有 486 个测试零影响。
         """
         if self.empvalue_env == "production" and self.auth_demo_mode:
-            raise ValueError(
-                "生产环境禁止开启 AUTH_DEMO_MODE(auth_demo_mode)"
-            )
+            raise ValueError("生产环境禁止开启 AUTH_DEMO_MODE(auth_demo_mode)")
         return self
 
 

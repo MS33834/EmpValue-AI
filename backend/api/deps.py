@@ -12,6 +12,7 @@ from agent.prompt_loader import PromptLoader
 from agent.tools import AgentToolkit
 from core.config import Settings, get_settings
 from core.database import get_db
+from core.job_queue import JobQueue, create_job_queue
 from core.model_router import ModelRouter
 from core.multimodal import MultimodalCleaner
 from memory.vector_store import ChromaCompanyKB, ChromaMemoryStore
@@ -31,6 +32,8 @@ class AppState:
         self.memory_store = ChromaMemoryStore(settings=settings)
         self.company_kb = ChromaCompanyKB(settings=settings)
         self.multimodal_cleaner = MultimodalCleaner()
+        # 异步评估任务队列:配置 redis_url 走 Redis,否则内存(测试/本地)
+        self.job_queue: JobQueue = create_job_queue(settings)
 
     async def close(self) -> None:
         """关闭应用级资源（向量库客户端、embedding 客户端等）"""
@@ -71,5 +74,7 @@ def get_audit_service(session: AsyncSession = Depends(get_db)) -> AuditService:
     return AuditService(session)
 
 
-def get_evaluation_service(session: AsyncSession = Depends(get_db)) -> EvaluationService:
+def get_evaluation_service(
+    session: AsyncSession = Depends(get_db),
+) -> EvaluationService:
     return EvaluationService(session)

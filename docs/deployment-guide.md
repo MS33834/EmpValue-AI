@@ -14,7 +14,7 @@
 | **云端模式** | 追求最强推理能力、快速试点 | 是 | 任意 | 应用服务器 16C32G |
 | **混合模式** | 常规工作负载本地处理，复杂任务上云 | 部分 | 200-2000 人 | 本地 GPU + 云端 API |
 
-> **建议：** 初次试点选择混合模式，常规评估使用本地 L2/L3 模型，复杂多模态分析调用云端 L0 模型。
+> 拿不准的话先上混合模式：常规评估走本地 L2/L3，复杂多模态分析再调云端 L0，成本和保密两头都不亏。
 
 ---
 
@@ -121,7 +121,7 @@ alembic -c alembic.ini upgrade head
 
 ### 3.6 生产环境 Compose
 
-基础 `docker-compose.yml` 面向**开发与演示**:使用 SQLite、本地附件目录、无 GPU,开箱即用但不具备生产级数据持久化与扩展能力。生产部署应叠加 `docker-compose.prod.yml` override,补齐 PostgreSQL、MinIO、GPU 三项扩展。
+基础 `docker-compose.yml` 面向**开发与演示**：SQLite、本地附件目录、无 GPU，开箱即用，但没有生产级的数据持久化和扩展能力。生产部署叠加 `docker-compose.prod.yml` override，补齐 PostgreSQL、MinIO、GPU 三项。
 
 **启动命令(双文件叠加):**
 
@@ -139,7 +139,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 **凭据注入:** PostgreSQL 与 MinIO 的默认凭据仅用于快速体验,生产环境务必通过 `backend/.env` 或外部密钥管理服务覆盖 `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`。
 
-> 本节与第四章"生产环境增强"呼应:第四章给出的是手动修改 `docker-compose.yml` 的零散示例,本节则提供已封装好的 override 文件,推荐优先使用 override 方式,避免污染基础 compose。
+> 第四章给的是手动改 `docker-compose.yml` 的零散片段，这里则是封装好的 override 文件。优先用 override，别去污染基础 compose。
 
 ---
 
@@ -380,7 +380,7 @@ curl http://localhost:8000/health
 
 ### 7.4 任务队列与横向扩展
 
-> 本节说明当前任务队列的运行形态与横向扩展前置条件,指导生产容量规划。
+> 横向扩展前先把这一节看完：当前任务队列是进程内内存态，直接加副本会让任务状态割裂。
 
 **当前形态(单实例):**
 

@@ -4,6 +4,7 @@
 注意：transition 不在内部 commit，由调用方控制事务边界以保证原子性。
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import List, Literal, Optional
@@ -11,8 +12,11 @@ from typing import List, Literal, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.metrics import record_approval_transition
 from models import ApprovalAction, Evaluation
 from models.constants import EvaluationStatus
+
+logger = logging.getLogger(__name__)
 
 
 class ApprovalService:
@@ -48,7 +52,9 @@ class ApprovalService:
     async def transition_status(
         self,
         evaluation_id: str,
-        action: Literal["approve", "reject", "request_hr_review", "request_manager_review", "appeal"],
+        action: Literal[
+            "approve", "reject", "request_hr_review", "request_manager_review", "appeal"
+        ],
         actor_id: str,
         actor_role: str,
         comment: Optional[str] = None,
@@ -79,7 +85,10 @@ class ApprovalService:
             evaluation.approved_at = datetime.now(timezone.utc)
             if approver_id:
                 evaluation.approver_id = approver_id
-        elif current_status == EvaluationStatus.APPROVED and new_status != EvaluationStatus.APPROVED:
+        elif (
+            current_status == EvaluationStatus.APPROVED
+            and new_status != EvaluationStatus.APPROVED
+        ):
             evaluation.approved_at = None
             evaluation.approver_id = None
         elif approver_id:
@@ -94,6 +103,11 @@ class ApprovalService:
             comment=comment,
         )
         self.session.add(action_record)
+        # 业务埋点:审批流转计数,埋点失败不影响状态机
+        try:
+            record_approval_transition(action, current_status, new_status)
+        except Exception:
+            logger.exception("record_approval_transition 埋点失败 action=%s", action)
         return current_status, new_status
 
     async def get_history(self, evaluation_id: str) -> List[ApprovalAction]:
@@ -107,4 +121,3 @@ class ApprovalService:
     @staticmethod
     def get_allowed_actions(current_status: str) -> List[str]:
         return list(ApprovalService.VALID_TRANSITIONS.get(current_status, {}).keys())
-

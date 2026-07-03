@@ -1,0 +1,28 @@
+# Ruff 配置:Phase 6 起接入 lint,采用渐进式策略
+# - 启用 E(pycodestyle 错误)与 F(pyflakes)核心规则
+# - 忽略 F401(未使用导入):测试文件常为注册副作用导入模型,生产代码历史遗留待逐步清理
+# - 忽略 F841(未使用局部变量):现有测试有断言前的中间变量,后续单独治理
+# 目标:CI 绿色 + 新增代码受约束,不强推大规模重构
+line-length = 120
+target-version = "py311"
+extend-exclude = [
+    "alembic",
+    "chroma_db",
+    "build",
+    ".pytest_cache",
+]
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "F401",  # 未使用导入:测试副作用导入 + 历史遗留,渐进清理
+    "F841",  # 未使用局部变量:现有测试中间变量,后续治理
+    "E741",  # 模糊变量名(l/I):部分历史代码使用,暂不强制
+    "F541",  # 无占位符 f-string:风格问题,不阻断
+    "F402",  # 导入影子:少量历史代码,后续治理
+    "E501",  # 行过长:由 black 控制,不重复约束
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402", "E501"]
+"eval/*" = ["E402"]

@@ -1,13 +1,10 @@
 """
-Prometheus 指标收集模块
+Prometheus 指标收集。
 
-定义 EmpValue-AI 的核心业务指标，并提供：
-- 模块级指标对象（Counter / Histogram / Gauge）
-- 便捷埋点函数（业务代码调用，避免散落 label 拼装逻辑）
-- setup_metrics(app)：把 prometheus_client 的 ASGI 应用挂到 FastAPI 的 /metrics 路径，
-  供 Prometheus 抓取（端点无需鉴权）。
+业务代码只管调下面的埋点函数，label 拼装和命名集中在这里管，避免散落到各处拼写出错。
+setup_metrics(app) 把 prometheus_client 的 ASGI 应用挂到 /metrics，不走鉴权，方便 Prometheus 直接抓。
 
-指标命名统一以 empvalue_ 为前缀，遵循 Prometheus 命名规范。
+指标统一以 empvalue_ 为前缀。
 """
 
 from __future__ import annotations
@@ -15,7 +12,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
 
-# ---------------- 业务指标定义 ----------------
+# 业务指标定义
 
 # 评估总数（按终态 status 与模型档位 model_tier 维度统计）
 EVALUATIONS_TOTAL = Counter(
@@ -59,9 +56,7 @@ ACTIVE_JOBS = Gauge(
 )
 
 
-# ---------------- 便捷埋点函数 ----------------
-# 业务代码应优先调用这些函数，而非直接操作指标对象，
-# 以集中管理 label 取值与命名，降低拼写出错风险。
+# 便捷埋点函数
 
 
 def record_evaluation(status: str, model_tier: str) -> None:
@@ -96,7 +91,7 @@ def set_active_jobs(n: int) -> None:
     ACTIVE_JOBS.set(n)
 
 
-# ---------------- ASGI 挂载 ----------------
+# ASGI 挂载
 
 
 def setup_metrics(app: FastAPI) -> None:
